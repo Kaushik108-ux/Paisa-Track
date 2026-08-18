@@ -499,14 +499,23 @@ function handleClientStorage(endpoint, options = {}) {
     return months.reverse();
   }
 
-  // 8. Insights Category
-  if (path === '/insights/category' && method === 'GET') {
-    const { month, category } = params;
+  // 8. Insights Category (supports /insights/category/:category and /insights/category?category=...)
+  if (path.startsWith('/insights/category') && method === 'GET') {
+    let targetCategory = params.category;
+    if (!targetCategory) {
+      const prefix = '/insights/category/';
+      if (path.startsWith(prefix)) {
+        targetCategory = decodeURIComponent(path.substring(prefix.length));
+      }
+    }
+
+    const month = params.month || new Date().toISOString().substring(0, 7);
     const expenses = getExpenses().filter(
       e => e.userId === userId && 
            e.budgetMonth === month && 
            e.category && 
-           e.category.toLowerCase() === (category || '').toLowerCase()
+           (e.category.toLowerCase() === (targetCategory || '').toLowerCase() ||
+            encodeURIComponent(e.category.toLowerCase()) === (targetCategory || '').toLowerCase())
     );
     const total = expenses.reduce((sum, e) => sum + e.amount, 0);
 
@@ -523,7 +532,7 @@ function handleClientStorage(endpoint, options = {}) {
     })).sort((a, b) => b.amount - a.amount);
 
     return {
-      category,
+      category: targetCategory,
       total,
       percentage: 100,
       detailedBreakdown,

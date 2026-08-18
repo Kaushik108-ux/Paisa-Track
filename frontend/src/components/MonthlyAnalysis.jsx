@@ -43,7 +43,7 @@ export default function MonthlyAnalysis({ selectedMonth, refreshTrigger }) {
     setActiveCategory(catName);
     setCatLoading(true);
     try {
-      const res = await api.get(`/insights/category/${catName}?month=${selectedMonth}`);
+      const res = await api.get(`/insights/category/${encodeURIComponent(catName)}?month=${selectedMonth}`);
       setCatDetailData(res);
     } catch (err) {
       console.error('Error fetching category details:', err.message);
