@@ -362,6 +362,22 @@ function handleClientStorage(endpoint, options = {}) {
       insights.push(`📝 No expenses recorded for ${month} yet. Click '+ Add Expense' to begin tracking.`);
     }
 
+    // Previous month comparison for Monthly History tab
+    const prevDate = new Date(year, monthNum - 2, 1);
+    const prevMonthStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+    const prevExpenses = getExpenses().filter(e => e.userId === userId && e.budgetMonth === prevMonthStr);
+    const prevSpent = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const diff = totalSpent - prevSpent;
+    const percentageChange = prevSpent > 0 ? parseFloat(((diff / prevSpent) * 100).toFixed(1)) : 0;
+
+    const comparison = {
+      previousMonth: prevMonthStr,
+      previousMonthSpent: prevSpent,
+      difference: diff,
+      percentageChange,
+      isHigher: diff > 0
+    };
+
     return {
       budget,
       totalSpent,
@@ -375,7 +391,8 @@ function handleClientStorage(endpoint, options = {}) {
       largestExpense,
       categoryBreakdown,
       recentTransactions,
-      insights
+      insights,
+      comparison
     };
   }
 
