@@ -12,15 +12,18 @@ export const setToken = (token) => {
   }
 };
 
-// Standard Categories
+// Standard Categories matching the entire app
 const DEFAULT_CATEGORIES = [
-  'Food & Dining',
-  'Study & Books',
-  'Hostel & Rent',
-  'Travel & Commute',
-  'Personal Care',
+  'Food',
+  'Transport',
+  'Study',
+  'Shopping',
   'Entertainment',
-  'Others'
+  'Mobile/Recharge',
+  'Laundry',
+  'Health',
+  'Hostel',
+  'Other'
 ];
 
 function getDaysInMonth(year, month) {
@@ -189,7 +192,7 @@ function handleClientStorage(endpoint, options = {}) {
           ...expenses[idx],
           amount: parseFloat(amount),
           description: description.trim(),
-          category,
+          category: category || 'Other',
           date,
           budgetMonth,
           note: note ? note.trim() : null
@@ -225,9 +228,9 @@ function handleClientStorage(endpoint, options = {}) {
       }
 
       userExpenses.sort((a, b) => {
-        if (sort === 'date-asc') return new Date(a.date) - new Date(b.date);
-        if (sort === 'amount-desc') return b.amount - a.amount;
-        if (sort === 'amount-asc') return a.amount - b.amount;
+        if (sort === 'date-asc' || sort === 'date-ASC') return new Date(a.date) - new Date(b.date);
+        if (sort === 'amount-desc' || sort === 'amount-DESC') return b.amount - a.amount;
+        if (sort === 'amount-asc' || sort === 'amount-ASC') return a.amount - b.amount;
         return new Date(b.date) - new Date(a.date);
       });
 
@@ -242,7 +245,7 @@ function handleClientStorage(endpoint, options = {}) {
         userId,
         amount: parseFloat(amount),
         description: description.trim(),
-        category,
+        category: category || 'Other',
         date,
         budgetMonth,
         note: note ? note.trim() : null,
@@ -292,8 +295,13 @@ function handleClientStorage(endpoint, options = {}) {
     const recommendedDailyLimit = remainingDays > 0 && remaining > 0 ? remaining / remainingDays : 0;
 
     const catTotals = {};
+    DEFAULT_CATEGORIES.forEach(cat => {
+      catTotals[cat] = 0;
+    });
+
     expenses.forEach(e => {
-      catTotals[e.category] = (catTotals[e.category] || 0) + e.amount;
+      const cat = e.category || 'Other';
+      catTotals[cat] = (catTotals[cat] || 0) + e.amount;
     });
 
     let highestCatName = null;
@@ -305,11 +313,11 @@ function handleClientStorage(endpoint, options = {}) {
       }
     });
 
-    const highestCategory = highestCatName
+    const highestCategory = highestCatName && highestCatAmount > 0
       ? {
           category: highestCatName,
           amount: highestCatAmount,
-          percentage: totalSpent > 0 ? Math.round((highestCatAmount / totalSpent) * 100) : 0
+          percentage: totalSpent > 0 ? parseFloat(((highestCatAmount / totalSpent) * 100).toFixed(1)) : 0
         }
       : null;
 
@@ -319,14 +327,14 @@ function handleClientStorage(endpoint, options = {}) {
       largestExpense = sortedByAmt[0];
     }
 
-    const categoryBreakdown = DEFAULT_CATEGORIES.map(cat => {
+    const categoryBreakdown = Object.keys(catTotals).map(cat => {
       const amt = catTotals[cat] || 0;
       return {
         category: cat,
         amount: amt,
-        percentage: totalSpent > 0 ? Math.round((amt / totalSpent) * 100) : 0
+        percentage: totalSpent > 0 ? parseFloat(((amt / totalSpent) * 100).toFixed(1)) : 0
       };
-    });
+    }).sort((a, b) => b.amount - a.amount);
 
     const recentTransactions = [...expenses]
       .sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -411,7 +419,10 @@ function handleClientStorage(endpoint, options = {}) {
   if (path === '/insights/category' && method === 'GET') {
     const { month, category } = params;
     const expenses = getExpenses().filter(
-      e => e.userId === userId && e.budgetMonth === month && e.category === category
+      e => e.userId === userId && 
+           e.budgetMonth === month && 
+           e.category && 
+           e.category.toLowerCase() === (category || '').toLowerCase()
     );
     const total = expenses.reduce((sum, e) => sum + e.amount, 0);
 
@@ -424,7 +435,7 @@ function handleClientStorage(endpoint, options = {}) {
     const detailedBreakdown = Object.keys(subGroups).map(name => ({
       name,
       amount: subGroups[name],
-      percentage: total > 0 ? Math.round((subGroups[name] / total) * 100) : 0
+      percentage: total > 0 ? parseFloat(((subGroups[name] / total) * 100).toFixed(1)) : 0
     })).sort((a, b) => b.amount - a.amount);
 
     return {
