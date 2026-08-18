@@ -35,7 +35,7 @@ function formatINR(val) {
   }).format(val || 0);
 }
 
-// In-Browser Client Storage Engine (runs when backend server is not available, e.g. on GitHub Pages)
+// In-Browser Client Storage Engine (runs on static hosts like GitHub Pages)
 function handleClientStorage(endpoint, options = {}) {
   const method = options.method || 'GET';
   const body = options.body ? JSON.parse(options.body) : {};
@@ -116,25 +116,59 @@ function handleClientStorage(endpoint, options = {}) {
   const userId = currentUser.id;
 
   // 4. Budgets
-  if (path === '/budgets') {
+  if (path.startsWith('/budgets')) {
     if (method === 'GET') {
-      const month = params.month;
+      const monthParam = params.month;
       const budgets = getBudgets();
-      const b = budgets.find(item => item.userId === userId && item.month === month);
-      return b ? { month: b.month, amount: b.amount } : null;
+      if (monthParam) {
+        const [yStr, mStr] = monthParam.split('-');
+        const y = parseInt(yStr);
+        const m = parseInt(mStr);
+        const b = budgets.find(item => item.userId === userId && (item.month === monthParam || (item.year === y && item.monthNum === m)));
+        return b ? { month: b.month || monthParam, amount: b.amount } : null;
+      }
+      return budgets.filter(b => b.userId === userId);
     }
+
     if (method === 'POST') {
-      const { month, amount } = body;
-      const parsed = parseFloat(amount);
-      const budgets = getBudgets();
-      const idx = budgets.findIndex(item => item.userId === userId && item.month === month);
-      if (idx >= 0) {
-        budgets[idx].amount = parsed;
+      const { month, year, amount } = body;
+      const parsedAmount = parseFloat(amount) || 0;
+      let monthStr = '';
+      let monthNum = 1;
+      let yearNum = 2026;
+
+      if (typeof month === 'string' && month.includes('-')) {
+        monthStr = month;
+        const [y, m] = month.split('-');
+        yearNum = parseInt(y);
+        monthNum = parseInt(m);
       } else {
-        budgets.push({ userId, month, amount: parsed });
+        monthNum = parseInt(month);
+        yearNum = parseInt(year) || new Date().getFullYear();
+        monthStr = `${yearNum}-${String(monthNum).padStart(2, '0')}`;
+      }
+
+      const budgets = getBudgets();
+      const idx = budgets.findIndex(item => 
+        item.userId === userId && 
+        (item.month === monthStr || (item.year === yearNum && item.monthNum === monthNum))
+      );
+
+      const budgetEntry = {
+        userId,
+        month: monthStr,
+        monthNum,
+        year: yearNum,
+        amount: parsedAmount
+      };
+
+      if (idx >= 0) {
+        budgets[idx] = budgetEntry;
+      } else {
+        budgets.push(budgetEntry);
       }
       saveBudgets(budgets);
-      return { month, amount: parsed };
+      return { message: 'Budget set successfully.', budget: { ...budgetEntry, exists: true } };
     }
   }
 
@@ -228,7 +262,10 @@ function handleClientStorage(endpoint, options = {}) {
     const monthNum = parseInt(monthStr);
 
     const budgets = getBudgets();
-    const budgetObj = budgets.find(b => b.userId === userId && b.month === month);
+    const budgetObj = budgets.find(b => 
+      b.userId === userId && 
+      (b.month === month || (b.year === year && b.monthNum === monthNum))
+    );
     const budget = budgetObj ? budgetObj.amount : 0;
 
     const expenses = getExpenses().filter(e => e.userId === userId && e.budgetMonth === month);
@@ -344,9 +381,14 @@ function handleClientStorage(endpoint, options = {}) {
     for (let i = 0; i < 6; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
       const mName = d.toLocaleString('default', { month: 'short', year: 'numeric' });
 
-      const bObj = budgets.find(b => b.userId === userId && b.month === mStr);
+      const bObj = budgets.find(b => 
+        b.userId === userId && 
+        (b.month === mStr || (b.year === y && b.monthNum === m))
+      );
       const bAmt = bObj ? bObj.amount : 0;
 
       const mExpenses = expenses.filter(e => e.userId === userId && e.budgetMonth === mStr);
