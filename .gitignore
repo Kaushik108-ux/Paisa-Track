@@ -1,0 +1,32 @@
+# Dependency directories
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Local databases (contains private transaction records and credentials)
+*.db
+*.db-journal
+backend/paisatrack.db
+backend/paisatrack.db-journal
+
+# Build outputs
+dist/
+frontend/dist/
+
+# Environment configurations and secrets
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+*.env
+*.env.*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS-generated files
+.DS_Store
+Thumbs.db
