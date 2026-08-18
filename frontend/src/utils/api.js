@@ -12,7 +12,403 @@ export const setToken = (token) => {
   }
 };
 
+// Standard Categories
+const DEFAULT_CATEGORIES = [
+  'Food & Dining',
+  'Study & Books',
+  'Hostel & Rent',
+  'Travel & Commute',
+  'Personal Care',
+  'Entertainment',
+  'Others'
+];
+
+function getDaysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+
+function formatINR(val) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0
+  }).format(val || 0);
+}
+
+// In-Browser Client Storage Engine (runs when backend server is not available, e.g. on GitHub Pages)
+function handleClientStorage(endpoint, options = {}) {
+  const method = options.method || 'GET';
+  const body = options.body ? JSON.parse(options.body) : {};
+  const token = getToken();
+
+  // Helper storage accessors
+  const getUsers = () => JSON.parse(localStorage.getItem('paisatrack_local_users') || '[]');
+  const saveUsers = (u) => localStorage.setItem('paisatrack_local_users', JSON.stringify(u));
+  const getBudgets = () => JSON.parse(localStorage.getItem('paisatrack_local_budgets') || '[]');
+  const saveBudgets = (b) => localStorage.setItem('paisatrack_local_budgets', JSON.stringify(b));
+  const getExpenses = () => JSON.parse(localStorage.getItem('paisatrack_local_expenses') || '[]');
+  const saveExpenses = (e) => localStorage.setItem('paisatrack_local_expenses', JSON.stringify(e));
+
+  // Current user from token
+  const getCurrentUser = () => {
+    if (!token) return null;
+    const users = getUsers();
+    return users.find(u => 'local_token_' + u.id === token) || users[0] || null;
+  };
+
+  const url = new URL('http://dummy.local' + endpoint);
+  const path = url.pathname;
+  const params = Object.fromEntries(url.searchParams.entries());
+
+  // 1. Auth Register
+  if (path === '/auth/register' && method === 'POST') {
+    const { name, email, password } = body;
+    if (!name || !email || !password) {
+      throw Object.assign(new Error('Please provide name, email, and password.'), { status: 400 });
+    }
+    const users = getUsers();
+    const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (existing) {
+      throw Object.assign(new Error('A user with this email address already exists.'), { status: 400 });
+    }
+    const newUser = {
+      id: Date.now(),
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      password,
+      created_at: new Date().toISOString()
+    };
+    users.push(newUser);
+    saveUsers(users);
+
+    const userObj = { id: newUser.id, name: newUser.name, email: newUser.email };
+    const userToken = 'local_token_' + newUser.id;
+    return { user: userObj, token: userToken };
+  }
+
+  // 2. Auth Login
+  if (path === '/auth/login' && method === 'POST') {
+    const { email, password } = body;
+    const users = getUsers();
+    const user = users.find(u => u.email.toLowerCase() === (email || '').toLowerCase());
+    if (!user || user.password !== password) {
+      throw Object.assign(new Error('Invalid email or password.'), { status: 401 });
+    }
+    const userObj = { id: user.id, name: user.name, email: user.email };
+    const userToken = 'local_token_' + user.id;
+    return { user: userObj, token: userToken };
+  }
+
+  // 3. Auth Me
+  if (path === '/auth/me' && method === 'GET') {
+    const user = getCurrentUser();
+    if (!user) {
+      throw Object.assign(new Error('Authentication required.'), { status: 401 });
+    }
+    return { id: user.id, name: user.name, email: user.email };
+  }
+
+  // Require auth for all remaining routes
+  const currentUser = getCurrentUser();
+  if (!currentUser) {
+    throw Object.assign(new Error('Authentication token is missing or invalid.'), { status: 401 });
+  }
+  const userId = currentUser.id;
+
+  // 4. Budgets
+  if (path === '/budgets') {
+    if (method === 'GET') {
+      const month = params.month;
+      const budgets = getBudgets();
+      const b = budgets.find(item => item.userId === userId && item.month === month);
+      return b ? { month: b.month, amount: b.amount } : null;
+    }
+    if (method === 'POST') {
+      const { month, amount } = body;
+      const parsed = parseFloat(amount);
+      const budgets = getBudgets();
+      const idx = budgets.findIndex(item => item.userId === userId && item.month === month);
+      if (idx >= 0) {
+        budgets[idx].amount = parsed;
+      } else {
+        budgets.push({ userId, month, amount: parsed });
+      }
+      saveBudgets(budgets);
+      return { month, amount: parsed };
+    }
+  }
+
+  // 5. Expenses
+  if (path.startsWith('/expenses')) {
+    const expenses = getExpenses();
+    const idMatch = path.match(/^\/expenses\/(\d+)$/);
+
+    if (idMatch) {
+      const expenseId = parseInt(idMatch[1]);
+      const idx = expenses.findIndex(e => e.id === expenseId && e.userId === userId);
+
+      if (method === 'PUT') {
+        if (idx === -1) throw Object.assign(new Error('Expense not found.'), { status: 404 });
+        const { amount, description, category, date, note } = body;
+        const budgetMonth = date.substring(0, 7);
+        expenses[idx] = {
+          ...expenses[idx],
+          amount: parseFloat(amount),
+          description: description.trim(),
+          category,
+          date,
+          budgetMonth,
+          note: note ? note.trim() : null
+        };
+        saveExpenses(expenses);
+        return expenses[idx];
+      }
+
+      if (method === 'DELETE') {
+        if (idx === -1) throw Object.assign(new Error('Expense not found.'), { status: 404 });
+        expenses.splice(idx, 1);
+        saveExpenses(expenses);
+        return { message: 'Expense deleted successfully.' };
+      }
+    }
+
+    if (method === 'GET') {
+      const month = params.month;
+      const search = (params.search || '').toLowerCase();
+      const category = params.category || '';
+      const sort = params.sort || 'date-desc';
+
+      let userExpenses = expenses.filter(e => e.userId === userId && e.budgetMonth === month);
+
+      if (category && category !== 'all') {
+        userExpenses = userExpenses.filter(e => e.category === category);
+      }
+      if (search) {
+        userExpenses = userExpenses.filter(e =>
+          (e.description && e.description.toLowerCase().includes(search)) ||
+          (e.note && e.note.toLowerCase().includes(search))
+        );
+      }
+
+      userExpenses.sort((a, b) => {
+        if (sort === 'date-asc') return new Date(a.date) - new Date(b.date);
+        if (sort === 'amount-desc') return b.amount - a.amount;
+        if (sort === 'amount-asc') return a.amount - b.amount;
+        return new Date(b.date) - new Date(a.date);
+      });
+
+      return userExpenses;
+    }
+
+    if (method === 'POST') {
+      const { amount, description, category, date, note } = body;
+      const budgetMonth = date.substring(0, 7);
+      const newExpense = {
+        id: Date.now(),
+        userId,
+        amount: parseFloat(amount),
+        description: description.trim(),
+        category,
+        date,
+        budgetMonth,
+        note: note ? note.trim() : null,
+        created_at: new Date().toISOString()
+      };
+      expenses.push(newExpense);
+      saveExpenses(expenses);
+      return newExpense;
+    }
+  }
+
+  // 6. Insights Summary
+  if (path === '/insights/summary' && method === 'GET') {
+    const month = params.month;
+    const [yearStr, monthStr] = month.split('-');
+    const year = parseInt(yearStr);
+    const monthNum = parseInt(monthStr);
+
+    const budgets = getBudgets();
+    const budgetObj = budgets.find(b => b.userId === userId && b.month === month);
+    const budget = budgetObj ? budgetObj.amount : 0;
+
+    const expenses = getExpenses().filter(e => e.userId === userId && e.budgetMonth === month);
+    const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const remaining = budget - totalSpent;
+    const percentageUsed = budget > 0 ? (totalSpent / budget) * 100 : 0;
+
+    const today = new Date();
+    const systemYear = today.getFullYear();
+    const systemMonth = today.getMonth() + 1;
+    const systemDate = today.getDate();
+
+    let remainingDays = 0;
+    const totalDaysInMonth = getDaysInMonth(year, monthNum);
+
+    if (year === systemYear && monthNum === systemMonth) {
+      remainingDays = totalDaysInMonth - systemDate + 1;
+    } else if (year > systemYear || (year === systemYear && monthNum > systemMonth)) {
+      remainingDays = totalDaysInMonth;
+    } else {
+      remainingDays = 0;
+    }
+
+    const recommendedDailyLimit = remainingDays > 0 && remaining > 0 ? remaining / remainingDays : 0;
+
+    const catTotals = {};
+    expenses.forEach(e => {
+      catTotals[e.category] = (catTotals[e.category] || 0) + e.amount;
+    });
+
+    let highestCatName = null;
+    let highestCatAmount = 0;
+    Object.keys(catTotals).forEach(cat => {
+      if (catTotals[cat] > highestCatAmount) {
+        highestCatAmount = catTotals[cat];
+        highestCatName = cat;
+      }
+    });
+
+    const highestCategory = highestCatName
+      ? {
+          category: highestCatName,
+          amount: highestCatAmount,
+          percentage: totalSpent > 0 ? Math.round((highestCatAmount / totalSpent) * 100) : 0
+        }
+      : null;
+
+    let largestExpense = null;
+    if (expenses.length > 0) {
+      const sortedByAmt = [...expenses].sort((a, b) => b.amount - a.amount);
+      largestExpense = sortedByAmt[0];
+    }
+
+    const categoryBreakdown = DEFAULT_CATEGORIES.map(cat => {
+      const amt = catTotals[cat] || 0;
+      return {
+        category: cat,
+        amount: amt,
+        percentage: totalSpent > 0 ? Math.round((amt / totalSpent) * 100) : 0
+      };
+    });
+
+    const recentTransactions = [...expenses]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 5);
+
+    const insights = [];
+    if (budget > 0) {
+      if (percentageUsed >= 100) {
+        insights.push(`🚨 You have exceeded your monthly budget by ${formatINR(totalSpent - budget)}! Freeze all non-essential spending.`);
+      } else if (percentageUsed >= 85) {
+        insights.push(`⚠️ Critical warning: You have used ${percentageUsed.toFixed(1)}% of your monthly budget. Only ${formatINR(remaining)} remains.`);
+      } else if (percentageUsed >= 70) {
+        insights.push(`🟡 You've reached ${percentageUsed.toFixed(1)}% of your budget. Spend with caution for the rest of the month.`);
+      } else {
+        insights.push(`✅ Great job! You are within your budget with ${formatINR(remaining)} available.`);
+      }
+    }
+    if (highestCategory) {
+      insights.push(`🏆 ${highestCategory.category} is your highest spending category this month (${highestCategory.percentage}% of total).`);
+    }
+    if (recommendedDailyLimit > 0 && remainingDays > 0) {
+      insights.push(`💡 Recommended daily spending limit: ${formatINR(recommendedDailyLimit)}/day for the remaining ${remainingDays} days.`);
+    }
+    if (expenses.length === 0) {
+      insights.push(`📝 No expenses recorded for ${month} yet. Click '+ Add Expense' to begin tracking.`);
+    }
+
+    return {
+      budget,
+      totalSpent,
+      remaining,
+      percentageUsed,
+      remainingDays,
+      recommendedDailyLimit,
+      todaySpent: 0,
+      isTodayExceeded: false,
+      highestCategory,
+      largestExpense,
+      categoryBreakdown,
+      recentTransactions,
+      insights
+    };
+  }
+
+  // 7. Insights History
+  if (path === '/insights/history' && method === 'GET') {
+    const months = [];
+    const now = new Date();
+    const budgets = getBudgets();
+    const expenses = getExpenses();
+
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const mName = d.toLocaleString('default', { month: 'short', year: 'numeric' });
+
+      const bObj = budgets.find(b => b.userId === userId && b.month === mStr);
+      const bAmt = bObj ? bObj.amount : 0;
+
+      const mExpenses = expenses.filter(e => e.userId === userId && e.budgetMonth === mStr);
+      const spent = mExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+      months.push({
+        month: mStr,
+        monthName: mName,
+        budget: bAmt,
+        spent,
+        remaining: bAmt - spent,
+        percentageUsed: bAmt > 0 ? (spent / bAmt) * 100 : 0
+      });
+    }
+
+    return months.reverse();
+  }
+
+  // 8. Insights Category
+  if (path === '/insights/category' && method === 'GET') {
+    const { month, category } = params;
+    const expenses = getExpenses().filter(
+      e => e.userId === userId && e.budgetMonth === month && e.category === category
+    );
+    const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+    const subGroups = {};
+    expenses.forEach(e => {
+      const name = (e.description || 'Other').trim();
+      subGroups[name] = (subGroups[name] || 0) + e.amount;
+    });
+
+    const detailedBreakdown = Object.keys(subGroups).map(name => ({
+      name,
+      amount: subGroups[name],
+      percentage: total > 0 ? Math.round((subGroups[name] / total) * 100) : 0
+    })).sort((a, b) => b.amount - a.amount);
+
+    return {
+      category,
+      total,
+      percentage: 100,
+      detailedBreakdown,
+      expenses
+    };
+  }
+
+  throw Object.assign(new Error(`Endpoint ${path} not found.`), { status: 404 });
+}
+
 async function apiRequest(endpoint, options = {}) {
+  // If running on GitHub Pages (static host), use client-side storage engine
+  const isStaticHost = typeof window !== 'undefined' && (
+    window.location.hostname.includes('github.io') ||
+    window.location.protocol === 'file:'
+  );
+
+  if (isStaticHost) {
+    return handleClientStorage(endpoint, options);
+  }
+
+  // Otherwise attempt to reach local / configured backend API
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -23,20 +419,34 @@ async function apiRequest(endpoint, options = {}) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+    });
 
-  const data = await response.json();
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      // Fallback if backend returned HTML (e.g. 404 from static hosting proxy)
+      return handleClientStorage(endpoint, options);
+    }
 
-  if (!response.ok) {
-    const error = new Error(data.error || 'Something went wrong');
-    error.status = response.status;
-    throw error;
+    const data = await response.json();
+
+    if (!response.ok) {
+      const error = new Error(data.error || 'Something went wrong');
+      error.status = response.status;
+      throw error;
+    }
+
+    return data;
+  } catch (err) {
+    if (err.status) {
+      throw err;
+    }
+    // Network failure -> fallback to local storage
+    return handleClientStorage(endpoint, options);
   }
-
-  return data;
 }
 
 export const api = {
