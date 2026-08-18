@@ -171,8 +171,8 @@ export default function Dashboard({
       color: CATEGORY_COLORS[cat.category] || '#94a3b8'
     }));
 
-  const [currentYear, currentMonth] = selectedMonth.split('-');
-  const selectedMonthDate = new Date(parseInt(currentYear), parseInt(currentMonth) - 1, 1);
+  const [currentYear, currentMonth] = (selectedMonth || '2026-08').split('-');
+  const selectedMonthDate = new Date(parseInt(currentYear) || 2026, (parseInt(currentMonth) || 8) - 1, 1);
   const monthName = selectedMonthDate.toLocaleString('default', { month: 'long', year: 'numeric' });
 
   return (
@@ -182,7 +182,7 @@ export default function Dashboard({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-brand-primary tracking-tight">
-            {getGreetingText()}{user ? `, ${user.name.split(' ')[0]}` : ''}! {getGreetingEmoji()}
+            {getGreetingText()}{user && user.name ? `, ${user.name.split(' ')[0]}` : ''}! {getGreetingEmoji()}
           </h2>
           <p className="text-sm text-slate-500 font-medium">
             Here's your spending overview for {monthName}.

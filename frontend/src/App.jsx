@@ -19,8 +19,17 @@ function MainAppContent() {
   const { user, loading } = useContext(AuthContext);
   const [currentTab, setCurrentTab] = useState('dashboard');
   
-  // Selected month state in YYYY-MM format
-  const [selectedMonth, setSelectedMonth] = useState('');
+  // Selected month state in YYYY-MM format (instant synchronous initialization)
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    try {
+      const saved = localStorage.getItem('paisatrack_selected_month');
+      if (saved && /^\d{4}-\d{2}$/.test(saved)) return saved;
+    } catch (e) {}
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    return `${yyyy}-${mm}`;
+  });
   
   // Refresh trigger to reload summaries/transactions immediately on change
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -31,26 +40,16 @@ function MainAppContent() {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
-  const [date, setDate] = useState('');
-  const [note, setNote] = useState('');
-  const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState(null);
-
-  // Default selected month on load (restoring from localStorage if exists)
-  useEffect(() => {
+  const [date, setDate] = useState(() => {
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
-    
-    const savedMonth = localStorage.getItem('paisatrack_selected_month');
-    if (savedMonth && /^\d{4}-\d{2}$/.test(savedMonth)) {
-      setSelectedMonth(savedMonth);
-    } else {
-      setSelectedMonth(`${yyyy}-${mm}`);
-    }
-    setDate(`${yyyy}-${mm}-${dd}`); // Default today's date in YYYY-MM-DD
-  }, []);
+    return `${yyyy}-${mm}-${dd}`;
+  });
+  const [note, setNote] = useState('');
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState(null);
 
   // Save selectedMonth to localStorage whenever it changes
   useEffect(() => {

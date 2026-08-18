@@ -82,8 +82,8 @@ export default function MonthlyAnalysis({ selectedMonth, refreshTrigger }) {
 
   const activeCategories = categoryBreakdown.filter(c => c.amount > 0);
 
-  const [currentYear, currentMonth] = selectedMonth.split('-');
-  const monthName = new Date(parseInt(currentYear), parseInt(currentMonth) - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+  const [currentYear, currentMonth] = (selectedMonth || '2026-08').split('-');
+  const monthName = new Date(parseInt(currentYear) || 2026, (parseInt(currentMonth) || 8) - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">

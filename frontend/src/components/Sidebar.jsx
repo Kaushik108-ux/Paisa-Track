@@ -76,11 +76,11 @@ export default function Sidebar({ currentTab, setCurrentTab, onAddExpenseClick }
           <div className="p-4 border-t border-navy-800 bg-navy-900/30">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-9 h-9 bg-brand-teal/20 text-brand-teal font-extrabold rounded-full flex items-center justify-center text-sm border border-brand-teal/30">
-                {user.name.charAt(0).toUpperCase()}
+                {(user.name || user.email || 'User').charAt(0).toUpperCase()}
               </div>
               <div className="overflow-hidden">
-                <p className="text-sm font-bold truncate text-slate-100">{user.name}</p>
-                <p className="text-xs text-slate-400 truncate">{user.email}</p>
+                <p className="text-sm font-bold truncate text-slate-100">{user.name || 'User'}</p>
+                <p className="text-xs text-slate-400 truncate">{user.email || ''}</p>
               </div>
             </div>
             <button
