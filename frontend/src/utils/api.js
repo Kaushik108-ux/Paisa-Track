@@ -1,14 +1,24 @@
 const API_BASE = '/api';
 
 // Retrieve token from LocalStorage
-const getToken = () => localStorage.getItem('paisatrack_token');
+const getToken = () => {
+  try {
+    return localStorage.getItem('paisatrack_token');
+  } catch (e) {
+    return null;
+  }
+};
 
 // Save or remove token
 export const setToken = (token) => {
-  if (token) {
-    localStorage.setItem('paisatrack_token', token);
-  } else {
-    localStorage.removeItem('paisatrack_token');
+  try {
+    if (token) {
+      localStorage.setItem('paisatrack_token', token);
+    } else {
+      localStorage.removeItem('paisatrack_token');
+    }
+  } catch (e) {
+    console.error('LocalStorage write error:', e);
   }
 };
 
@@ -40,28 +50,85 @@ function formatINR(val) {
 
 // In-Browser Client Storage Engine (runs on static hosts like GitHub Pages)
 function handleClientStorage(endpoint, options = {}) {
-  const method = options.method || 'GET';
-  const body = options.body ? JSON.parse(options.body) : {};
+  const method = (options.method || 'GET').toUpperCase();
+  let body = {};
+  if (options.body) {
+    try {
+      body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+    } catch (e) {
+      body = {};
+    }
+  }
+
   const token = getToken();
 
-  // Helper storage accessors
-  const getUsers = () => JSON.parse(localStorage.getItem('paisatrack_local_users') || '[]');
-  const saveUsers = (u) => localStorage.setItem('paisatrack_local_users', JSON.stringify(u));
-  const getBudgets = () => JSON.parse(localStorage.getItem('paisatrack_local_budgets') || '[]');
-  const saveBudgets = (b) => localStorage.setItem('paisatrack_local_budgets', JSON.stringify(b));
-  const getExpenses = () => JSON.parse(localStorage.getItem('paisatrack_local_expenses') || '[]');
-  const saveExpenses = (e) => localStorage.setItem('paisatrack_local_expenses', JSON.stringify(e));
+  // Helper storage accessors with safe fallback
+  const getUsers = () => {
+    try {
+      return JSON.parse(localStorage.getItem('paisatrack_local_users') || '[]');
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const saveUsers = (u) => {
+    try {
+      localStorage.setItem('paisatrack_local_users', JSON.stringify(u));
+    } catch (e) {}
+  };
+
+  const getBudgets = () => {
+    try {
+      return JSON.parse(localStorage.getItem('paisatrack_local_budgets') || '[]');
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const saveBudgets = (b) => {
+    try {
+      localStorage.setItem('paisatrack_local_budgets', JSON.stringify(b));
+    } catch (e) {}
+  };
+
+  const getExpenses = () => {
+    try {
+      return JSON.parse(localStorage.getItem('paisatrack_local_expenses') || '[]');
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const saveExpenses = (e) => {
+    try {
+      localStorage.setItem('paisatrack_local_expenses', JSON.stringify(e));
+    } catch (e) {}
+  };
+
+  // Safe endpoint path and query parsing
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+  const [path, queryString = ''] = cleanEndpoint.split('?');
+  const params = Object.fromEntries(new URLSearchParams(queryString).entries());
 
   // Current user from token
   const getCurrentUser = () => {
     if (!token) return null;
     const users = getUsers();
-    return users.find(u => 'local_token_' + u.id === token) || users[0] || null;
+    if (users.length === 0) {
+      const defaultUser = {
+        id: 101,
+        name: 'Kaushik',
+        email: 'user@paisatrack.app',
+        password: 'password123',
+        created_at: new Date().toISOString()
+      };
+      users.push(defaultUser);
+      saveUsers(users);
+      return defaultUser;
+    }
+    const found = users.find(u => 'local_token_' + u.id === token || u.id.toString() === token);
+    return found || users[0];
   };
-
-  const url = new URL('http://dummy.local' + endpoint);
-  const path = url.pathname;
-  const params = Object.fromEntries(url.searchParams.entries());
 
   // 1. Auth Register
   if (path === '/auth/register' && method === 'POST') {
@@ -187,11 +254,11 @@ function handleClientStorage(endpoint, options = {}) {
       if (method === 'PUT') {
         if (idx === -1) throw Object.assign(new Error('Expense not found.'), { status: 404 });
         const { amount, description, category, date, note } = body;
-        const budgetMonth = date.substring(0, 7);
+        const budgetMonth = date ? date.substring(0, 7) : new Date().toISOString().substring(0, 7);
         expenses[idx] = {
           ...expenses[idx],
           amount: parseFloat(amount),
-          description: description.trim(),
+          description: (description || '').trim(),
           category: category || 'Other',
           date,
           budgetMonth,
@@ -239,14 +306,14 @@ function handleClientStorage(endpoint, options = {}) {
 
     if (method === 'POST') {
       const { amount, description, category, date, note } = body;
-      const budgetMonth = date.substring(0, 7);
+      const budgetMonth = date ? date.substring(0, 7) : new Date().toISOString().substring(0, 7);
       const newExpense = {
         id: Date.now(),
         userId,
         amount: parseFloat(amount),
-        description: description.trim(),
+        description: (description || '').trim(),
         category: category || 'Other',
-        date,
+        date: date || new Date().toISOString().split('T')[0],
         budgetMonth,
         note: note ? note.trim() : null,
         created_at: new Date().toISOString()
@@ -259,10 +326,10 @@ function handleClientStorage(endpoint, options = {}) {
 
   // 6. Insights Summary
   if (path === '/insights/summary' && method === 'GET') {
-    const month = params.month;
+    const month = params.month || new Date().toISOString().substring(0, 7);
     const [yearStr, monthStr] = month.split('-');
-    const year = parseInt(yearStr);
-    const monthNum = parseInt(monthStr);
+    const year = parseInt(yearStr) || new Date().getFullYear();
+    const monthNum = parseInt(monthStr) || (new Date().getMonth() + 1);
 
     const budgets = getBudgets();
     const budgetObj = budgets.find(b => 
