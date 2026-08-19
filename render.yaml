@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: paisatrack-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://kaushik108-ux.github.io
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PORT
+        value: 5000

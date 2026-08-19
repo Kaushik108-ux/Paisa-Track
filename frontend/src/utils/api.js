@@ -1,4 +1,8 @@
-const API_BASE = '/api';
+// Resolve base API URL from Vite environment variable (VITE_API_URL) or default to relative '/api'
+const RAW_API_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) 
+  ? import.meta.env.VITE_API_URL.trim() 
+  : '';
+const API_BASE = RAW_API_URL ? `${RAW_API_URL.replace(/\/+$/, '')}/api` : '/api';
 
 // Retrieve token from LocalStorage
 const getToken = () => {
@@ -544,17 +548,12 @@ function handleClientStorage(endpoint, options = {}) {
 }
 
 async function apiRequest(endpoint, options = {}) {
-  // If running on GitHub Pages (static host), use client-side storage engine
-  const isStaticHost = typeof window !== 'undefined' && (
-    window.location.hostname.includes('github.io') ||
-    window.location.protocol === 'file:'
-  );
-
-  if (isStaticHost) {
+  // If file: protocol is used locally without any web server, fallback to client storage
+  if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
     return handleClientStorage(endpoint, options);
   }
 
-  // Otherwise attempt to reach local / configured backend API
+  // Attempt to reach configured backend API
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -565,15 +564,19 @@ async function apiRequest(endpoint, options = {}) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const targetUrl = `${API_BASE}${cleanEndpoint}`;
+
   try {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    const response = await fetch(targetUrl, {
       ...options,
       headers,
     });
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-      // Fallback if backend returned HTML (e.g. 404 from static hosting proxy)
+      // Fallback if backend returned HTML (e.g. 404 from unconfigured proxy)
+      console.warn(`Non-JSON response from ${targetUrl}, falling back to local client storage.`);
       return handleClientStorage(endpoint, options);
     }
 
@@ -591,6 +594,7 @@ async function apiRequest(endpoint, options = {}) {
       throw err;
     }
     // Network failure -> fallback to local storage
+    console.warn(`Network error requesting ${targetUrl}, falling back to local client storage:`, err.message);
     return handleClientStorage(endpoint, options);
   }
 }

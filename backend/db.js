@@ -1,14 +1,21 @@
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 const path = require('path');
+const fs = require('fs');
 
 let dbConnection = null;
 
 async function getDb() {
   if (dbConnection) return dbConnection;
 
-  const dbPath = path.join(__dirname, 'paisatrack.db');
+  const dbPath = process.env.DB_PATH || path.join(__dirname, 'paisatrack.db');
   
+  // Ensure target directory exists for custom volume paths (e.g. /data/paisatrack.db)
+  const dbDir = path.dirname(dbPath);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
   dbConnection = await open({
     filename: dbPath,
     driver: sqlite3.Database
