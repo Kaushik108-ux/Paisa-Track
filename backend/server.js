@@ -66,16 +66,25 @@ const budgetRoutes = require('./routes/budgets');
 const expenseRoutes = require('./routes/expenses');
 const insightRoutes = require('./routes/insights');
 
-// Mount routes
+// Mount routes (both /api prefix and root for maximum client compatibility)
 app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
 app.use('/api/budgets', budgetRoutes);
+app.use('/budgets', budgetRoutes);
 app.use('/api/expenses', expenseRoutes);
+app.use('/expenses', expenseRoutes);
 app.use('/api/insights', insightRoutes);
+app.use('/insights', insightRoutes);
+
+// 404 JSON fallback
+app.use((req, res) => {
+  res.status(404).json({ error: `Route ${req.method} ${req.originalUrl} not found.` });
+});
 
 // Fallback error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong on the server.' });
+  res.status(500).json({ error: err.message || 'Something went wrong on the server.' });
 });
 
 // Initialize DB and start server

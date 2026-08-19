@@ -2,7 +2,18 @@
 const RAW_API_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) 
   ? import.meta.env.VITE_API_URL.trim() 
   : '';
-const API_BASE = RAW_API_URL ? `${RAW_API_URL.replace(/\/+$/, '')}/api` : '/api';
+
+// Robust API base formatter that handles with/without trailing slash and with/without /api
+const getApiBase = () => {
+  if (!RAW_API_URL) return '/api';
+  let clean = RAW_API_URL.replace(/\/+$/, '');
+  if (clean.endsWith('/api')) {
+    return clean;
+  }
+  return `${clean}/api`;
+};
+
+const API_BASE = getApiBase();
 
 // Retrieve token from LocalStorage
 const getToken = () => {
@@ -573,17 +584,36 @@ async function apiRequest(endpoint, options = {}) {
       headers,
     });
 
-    const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      // Fallback if backend returned HTML (e.g. 404 from unconfigured proxy)
-      console.warn(`Non-JSON response from ${targetUrl}, falling back to local client storage.`);
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (parseErr) {
+      console.warn(`Non-JSON response received from ${targetUrl}:`, text.slice(0, 120));
+      if (!response.ok) {
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          throw Object.assign(
+            new Error('Backend server is spinning up or unavailable on Render. Please wait ~30 seconds and try again.'),
+            { status: response.status }
+          );
+        }
+        if (response.status === 404) {
+          throw Object.assign(
+            new Error(`Endpoint not found (404) at ${targetUrl}. Please verify your backend deployment URL.`),
+            { status: 404 }
+          );
+        }
+        throw Object.assign(
+          new Error(`Server returned error (${response.status}). Please check your backend service.`),
+          { status: response.status }
+        );
+      }
       return handleClientStorage(endpoint, options);
     }
 
-    const data = await response.json();
-
     if (!response.ok) {
-      const error = new Error(data.error || 'Something went wrong');
+      const errorMessage = data.error || data.message || `Request failed with status ${response.status}`;
+      const error = new Error(errorMessage);
       error.status = response.status;
       throw error;
     }
@@ -593,8 +623,11 @@ async function apiRequest(endpoint, options = {}) {
     if (err.status) {
       throw err;
     }
-    // Network failure -> fallback to local storage
-    console.warn(`Network error requesting ${targetUrl}, falling back to local client storage:`, err.message);
+    // Network failure (CORS error, DNS error, server unreachable)
+    console.warn(`Network error requesting ${targetUrl}:`, err.message);
+    if (RAW_API_URL) {
+      throw new Error(`Unable to connect to backend at ${RAW_API_URL}. The server may be asleep or waking up. Please wait 30 seconds and try again.`);
+    }
     return handleClientStorage(endpoint, options);
   }
 }
