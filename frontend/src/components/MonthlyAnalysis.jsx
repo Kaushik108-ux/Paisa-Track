@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { 
-  Trophy, TrendingUp, DollarSign, Calendar, 
-  ArrowRight, Landmark, ArrowUpRight, ChevronRight, X 
+  Trophy, TrendingUp, ChevronRight, X 
 } from 'lucide-react';
 
 export default function MonthlyAnalysis({ selectedMonth, refreshTrigger }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
   // Category breakdown details state
   const [activeCategory, setActiveCategory] = useState(null);
@@ -19,7 +17,6 @@ export default function MonthlyAnalysis({ selectedMonth, refreshTrigger }) {
   useEffect(() => {
     async function fetchSummary() {
       setLoading(true);
-      setError(null);
       try {
         const res = await api.get(`/insights/summary?month=${selectedMonth}`);
         setData(res);
@@ -29,7 +26,6 @@ export default function MonthlyAnalysis({ selectedMonth, refreshTrigger }) {
         setCatDetailData(null);
       } catch (err) {
         console.error('Error fetching analysis summary:', err.message);
-        setError('Failed to retrieve monthly analysis.');
       } finally {
         setLoading(false);
       }

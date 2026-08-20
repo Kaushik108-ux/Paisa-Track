@@ -1,22 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { 
-  AreaChart, Area, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
-  BarChart, Bar
+  AreaChart, Area, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
-import { Calendar, History, TrendingUp, TrendingDown, Info, ArrowRight } from 'lucide-react';
+import { History, TrendingUp, TrendingDown, Info } from 'lucide-react';
 
 export default function MonthlyHistory({ selectedMonth, refreshTrigger }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [activeSummary, setActiveSummary] = useState(null);
 
   // Fetch 6-month history and selected month comparison details
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
-      setError(null);
       try {
         const historyData = await api.get('/insights/history');
         setHistory(historyData);
@@ -25,7 +22,6 @@ export default function MonthlyHistory({ selectedMonth, refreshTrigger }) {
         setActiveSummary(summaryData);
       } catch (err) {
         console.error('Error fetching historical comparisons:', err.message);
-        setError('Failed to load historical comparison data.');
       } finally {
         setLoading(false);
       }

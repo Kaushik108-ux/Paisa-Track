@@ -33,7 +33,10 @@ export default function Auth() {
       setErrorMsg('Please enter a valid email address.');
       return false;
     }
-    if (mode === 'signup' && !name) {
+    if (mode === 'forgot') {
+      return true;
+    }
+    if (mode === 'signup' && !name.trim()) {
       setErrorMsg('Please enter your name.');
       return false;
     }
@@ -42,10 +45,6 @@ export default function Auth() {
       return false;
     }
     if (mode === 'signup' && password !== confirmPassword) {
-      setErrorMsg('Passwords do not match.');
-      return false;
-    }
-    if (mode === 'forgot' && password !== confirmPassword) {
       setErrorMsg('Passwords do not match.');
       return false;
     }
@@ -66,8 +65,8 @@ export default function Auth() {
       } else if (mode === 'signup') {
         await register(name, email, password);
       } else if (mode === 'forgot') {
-        const response = await forgotPassword(email, password);
-        setSuccessMsg(response.message || 'Password reset successful! You can now log in.');
+        const response = await forgotPassword(email);
+        setSuccessMsg(response.message || 'Password reset email sent! Check your inbox.');
         setMode('login');
         setPassword('');
         setConfirmPassword('');
@@ -94,7 +93,7 @@ export default function Auth() {
           <p className="mt-2 text-sm text-slate-500 font-medium">
             {mode === 'login' && 'Track. Analyze. Save. Manage hostel expenses.'}
             {mode === 'signup' && 'Create your free account and start tracking today.'}
-            {mode === 'forgot' && 'Reset your password to regain access.'}
+            {mode === 'forgot' && 'Enter your email to receive a password reset link.'}
           </p>
         </div>
 
@@ -159,51 +158,53 @@ export default function Auth() {
               </div>
             </div>
 
-            {/* Password Field */}
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  {mode === 'forgot' ? 'New Password' : 'Password'}
-                </label>
-                {mode === 'login' && (
+            {/* Password Field (Login & Signup only) */}
+            {mode !== 'forgot' && (
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                    Password
+                  </label>
+                  {mode === 'login' && (
+                    <button
+                      type="button"
+                      onClick={() => toggleMode('forgot')}
+                      className="text-xs font-semibold text-brand-teal hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+                    <Lock className="h-5 w-5" />
+                  </span>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="block w-full pl-10 pr-10 py-3 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-brand-teal bg-slate-50/50 hover:bg-slate-50 transition-all text-sm font-medium"
+                    placeholder="••••••••"
+                  />
                   <button
                     type="button"
-                    onClick={() => toggleMode('forgot')}
-                    className="text-xs font-semibold text-brand-teal hover:underline"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
                   >
-                    Forgot password?
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
+                </div>
+                {mode === 'signup' && (
+                  <p className="mt-1 text-[11px] text-slate-500 font-medium">
+                    Must be at least 6 characters.
+                  </p>
                 )}
               </div>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
-                  <Lock className="h-5 w-5" />
-                </span>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full pl-10 pr-10 py-3 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-brand-teal bg-slate-50/50 hover:bg-slate-50 transition-all text-sm font-medium"
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-              {mode === 'signup' && (
-                <p className="mt-1 text-[11px] text-slate-500 font-medium">
-                  Must be at least 6 characters.
-                </p>
-              )}
-            </div>
+            )}
 
-            {/* Confirm Password Field (Sign Up & Forgot only) */}
-            {(mode === 'signup' || mode === 'forgot') && (
+            {/* Confirm Password Field (Sign Up only) */}
+            {mode === 'signup' && (
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
                   Confirm Password
@@ -238,7 +239,7 @@ export default function Auth() {
                 <>
                   {mode === 'login' && 'Sign In'}
                   {mode === 'signup' && 'Create Account'}
-                  {mode === 'forgot' && 'Reset Password'}
+                  {mode === 'forgot' && 'Send Password Reset Link'}
                 </>
               )}
             </button>
@@ -247,7 +248,7 @@ export default function Auth() {
 
         {/* Mode Toggles */}
         <div className="text-center pt-2 border-t border-slate-100">
-          {mode === 'login' ? (
+          {mode === 'login' && (
             <p className="text-sm text-slate-600 font-medium">
               Don't have an account?{' '}
               <button
@@ -257,7 +258,8 @@ export default function Auth() {
                 Sign up
               </button>
             </p>
-          ) : (
+          )}
+          {mode === 'signup' && (
             <p className="text-sm text-slate-600 font-medium">
               Already have an account?{' '}
               <button
@@ -265,6 +267,17 @@ export default function Auth() {
                 className="font-bold text-brand-teal hover:underline focus:outline-none"
               >
                 Sign in
+              </button>
+            </p>
+          )}
+          {mode === 'forgot' && (
+            <p className="text-sm text-slate-600 font-medium">
+              Remembered your password?{' '}
+              <button
+                onClick={() => toggleMode('login')}
+                className="font-bold text-brand-teal hover:underline focus:outline-none"
+              >
+                Back to Sign in
               </button>
             </p>
           )}

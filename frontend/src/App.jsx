@@ -8,7 +8,7 @@ import MonthlyHistory from './components/MonthlyHistory';
 import Settings from './components/Settings';
 import Auth from './components/Auth';
 import { api } from './utils/api';
-import { X, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { X, AlertTriangle } from 'lucide-react';
 
 const CATEGORIES = [
   'Food', 'Transport', 'Study', 'Shopping', 'Entertainment',
@@ -24,7 +24,9 @@ function MainAppContent() {
     try {
       const saved = localStorage.getItem('paisatrack_selected_month');
       if (saved && /^\d{4}-\d{2}$/.test(saved)) return saved;
-    } catch (e) {}
+    } catch {
+      // Ignore localStorage read errors
+    }
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth() + 1).padStart(2, '0');

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { 
   Search, Filter, ArrowUpDown, Trash2, Edit3, 
-  AlertTriangle, Calendar, X, Check, CheckCircle2 
+  AlertTriangle, X 
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -40,28 +40,37 @@ export default function Transactions({
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState(null);
 
-  // Fetch expenses with active filters
-  const fetchExpenses = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      let url = `/expenses?month=${selectedMonth}`;
-      if (search) url += `&search=${encodeURIComponent(search)}`;
-      if (category) url += `&category=${encodeURIComponent(category)}`;
-      url += `&sortBy=${sortBy}&sortOrder=${sortOrder}`;
-      
-      const data = await api.get(url);
-      setExpenses(data);
-    } catch (err) {
-      console.error('Error fetching expenses:', err.message);
-      setError('Could not load transaction history.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchExpenses();
+    let isMounted = true;
+    async function loadExpenses() {
+      setLoading(true);
+      setError(null);
+      try {
+        let url = `/expenses?month=${selectedMonth}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+        if (category) url += `&category=${encodeURIComponent(category)}`;
+        url += `&sortBy=${sortBy}&sortOrder=${sortOrder}`;
+        
+        const data = await api.get(url);
+        if (isMounted) {
+          setExpenses(data);
+        }
+      } catch (err) {
+        console.error('Error fetching expenses:', err.message);
+        if (isMounted) {
+          setError('Could not load transaction history.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadExpenses();
+    return () => {
+      isMounted = false;
+    };
   }, [selectedMonth, search, category, sortBy, sortOrder, refreshTrigger]);
 
   const handleDelete = async () => {

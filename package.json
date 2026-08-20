@@ -1,13 +1,14 @@
 {
   "name": "paisatrack-root",
   "version": "1.0.0",
-  "description": "Full-Stack Personal Expense & Budget Tracker",
+  "description": "Personal Expense & Budget Tracker powered by Firebase",
   "main": "index.js",
   "scripts": {
-    "install-all": "npm install && npm install --prefix backend && npm install --prefix frontend",
-    "server": "npm run dev --prefix backend",
-    "client": "npm run dev --prefix frontend",
-    "dev": "concurrently \"npm run server\" \"npm run client\""
+    "dev": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "preview": "npm run preview --prefix frontend",
+    "lint": "npm run lint --prefix frontend",
+    "install-all": "npm install && npm install --prefix frontend"
   },
   "keywords": [],
   "author": "",

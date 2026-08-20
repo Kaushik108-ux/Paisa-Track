@@ -2,7 +2,7 @@ import React, { useContext, useState } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import { 
   User, Mail, Calendar, Coins, Tags, 
-  Paintbrush, LogOut, ShieldCheck, Check, AlertCircle 
+  Paintbrush, LogOut, Check 
 } from 'lucide-react';
 
 const DEFAULT_CATEGORIES = [

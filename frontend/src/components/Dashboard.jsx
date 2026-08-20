@@ -2,13 +2,12 @@ import React, { useState, useEffect, useContext } from 'react';
 import { api } from '../utils/api';
 import { AuthContext } from '../context/AuthContext';
 import { 
-  PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip,
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
   BarChart, Bar, XAxis, YAxis
 } from 'recharts';
 import { 
   IndianRupee, TrendingUp, AlertTriangle, Lightbulb, 
-  PlusCircle, Edit2, Calendar, CheckCircle2, ChevronRight,
-  TrendingDown, Info
+  Edit2, Calendar, CheckCircle2, ChevronRight, Info
 } from 'lucide-react';
 
 // Color map for categories
@@ -36,38 +35,35 @@ export default function Dashboard({
   const { user } = useContext(AuthContext);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [budgetModalOpen, setBudgetModalOpen] = useState(false);
   const [newBudget, setNewBudget] = useState('');
   const [budgetSubmitting, setBudgetSubmitting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerYear, setPickerYear] = useState(2026);
-
-  // Sync year in picker when selectedMonth changes
-  useEffect(() => {
-    if (selectedMonth) {
-      const [y] = selectedMonth.split('-');
-      setPickerYear(parseInt(y));
-    }
-  }, [selectedMonth]);
+  const [pickerYear, setPickerYear] = useState(() => selectedMonth ? parseInt(selectedMonth.split('-')[0]) : 2026);
 
   // Fetch summary metrics
   useEffect(() => {
+    let isMounted = true;
     async function fetchSummary() {
       setLoading(true);
-      setError(null);
       try {
         const summaryData = await api.get(`/insights/summary?month=${selectedMonth}`);
-        setData(summaryData);
+        if (isMounted) {
+          setData(summaryData);
+        }
       } catch (err) {
         console.error('Error fetching dashboard summary:', err.message);
-        setError('Failed to load dashboard data. Please try again.');
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     }
 
     fetchSummary();
+    return () => {
+      isMounted = false;
+    };
   }, [selectedMonth, refreshTrigger]);
 
   const handleSetBudget = async (e) => {
@@ -143,23 +139,19 @@ export default function Dashboard({
   // Status mapping
   let budgetStatus = 'Normal';
   let progressColor = 'bg-brand-green';
-  let progressBg = 'bg-emerald-50';
   let textThemeColor = 'text-brand-green';
 
   if (percentageUsed >= 100) {
     budgetStatus = 'Exceeded';
     progressColor = 'bg-brand-red';
-    progressBg = 'bg-red-50';
     textThemeColor = 'text-brand-red';
   } else if (percentageUsed >= 85) {
     budgetStatus = 'Critical';
     progressColor = 'bg-brand-orange';
-    progressBg = 'bg-orange-50';
     textThemeColor = 'text-brand-orange';
   } else if (percentageUsed >= 70) {
     budgetStatus = 'Warning';
     progressColor = 'bg-brand-yellow';
-    progressBg = 'bg-amber-50';
     textThemeColor = 'text-brand-yellow';
   }
 

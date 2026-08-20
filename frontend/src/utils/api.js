@@ -1,44 +1,17 @@
-// Resolve base API URL from Vite environment variable (VITE_API_URL) or default to relative '/api'
-const RAW_API_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) 
-  ? import.meta.env.VITE_API_URL.trim() 
-  : '';
-
-// Robust API base formatter that handles with/without trailing slash and with/without /api
-const getApiBase = () => {
-  if (!RAW_API_URL) return '/api';
-  let clean = RAW_API_URL.replace(/\/+$/, '');
-  if (clean.endsWith('/api')) {
-    return clean;
-  }
-  return `${clean}/api`;
-};
-
-const API_BASE = getApiBase();
-
-// Retrieve token from LocalStorage
-const getToken = () => {
-  try {
-    return localStorage.getItem('paisatrack_token');
-  } catch (e) {
-    return null;
-  }
-};
-
-// Save or remove token
-export const setToken = (token) => {
-  try {
-    if (token) {
-      localStorage.setItem('paisatrack_token', token);
-    } else {
-      localStorage.removeItem('paisatrack_token');
-    }
-  } catch (e) {
-    console.error('LocalStorage write error:', e);
-  }
-};
+import { auth, db } from '../services/firebase';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  addDoc,
+  updateDoc,
+  deleteDoc
+} from 'firebase/firestore';
 
 // Standard Categories matching the entire app
-const DEFAULT_CATEGORIES = [
+export const DEFAULT_CATEGORIES = [
   'Food',
   'Transport',
   'Study',
@@ -63,578 +36,588 @@ function formatINR(val) {
   }).format(val || 0);
 }
 
-// In-Browser Client Storage Engine (runs on static hosts like GitHub Pages)
-function handleClientStorage(endpoint, options = {}) {
+// Helper to get currently authenticated Firebase user or throw
+function getAuthenticatedUser() {
+  const user = auth.currentUser;
+  if (!user) {
+    const error = new Error('Authentication required. Please log in.');
+    error.status = 401;
+    throw error;
+  }
+  return user;
+}
+
+// Helper to parse query parameters from endpoint strings like '/expenses?month=2026-08&category=Food'
+function parseEndpoint(endpoint) {
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+  const [path, queryString = ''] = cleanEndpoint.split('?');
+  const params = Object.fromEntries(new URLSearchParams(queryString).entries());
+  return { path, params };
+}
+
+// ==========================================
+// Cloud Firestore Data Handlers
+// ==========================================
+
+// 1. Expenses Handlers
+async function handleExpensesGet(params) {
+  const user = getAuthenticatedUser();
+  const expensesRef = collection(db, 'users', user.uid, 'expenses');
+  
+  const snapshot = await getDocs(expensesRef);
+  let expenses = snapshot.docs.map(d => ({
+    id: d.id,
+    ...d.data()
+  }));
+
+  const month = params.month;
+  const search = (params.search || '').toLowerCase();
+  const category = params.category || '';
+  const sortBy = params.sortBy || 'date';
+  const sortOrder = (params.sortOrder || 'DESC').toUpperCase();
+
+  // Filter by month
+  if (month) {
+    expenses = expenses.filter(e => e.budgetMonth === month || (e.date && e.date.startsWith(month)));
+  }
+
+  // Filter by category
+  if (category && category !== 'all') {
+    expenses = expenses.filter(e => e.category === category);
+  }
+
+  // Filter by search string
+  if (search) {
+    expenses = expenses.filter(e =>
+      (e.description && e.description.toLowerCase().includes(search)) ||
+      (e.note && e.note.toLowerCase().includes(search))
+    );
+  }
+
+  // Sorting
+  expenses.sort((a, b) => {
+    if (sortBy === 'amount') {
+      return sortOrder === 'ASC' ? a.amount - b.amount : b.amount - a.amount;
+    }
+    // Default sort by date
+    const dateA = new Date(a.date || a.createdAt || 0).getTime();
+    const dateB = new Date(b.date || b.createdAt || 0).getTime();
+    return sortOrder === 'ASC' ? dateA - dateB : dateB - dateA;
+  });
+
+  return expenses;
+}
+
+async function handleExpensesPost(body) {
+  const user = getAuthenticatedUser();
+  const { amount, description, category, date, note } = body;
+  const parsedAmount = parseFloat(amount);
+
+  if (isNaN(parsedAmount) || parsedAmount <= 0) {
+    throw Object.assign(new Error('Amount must be a number greater than 0.'), { status: 400 });
+  }
+  if (!description || !description.trim()) {
+    throw Object.assign(new Error('Description is required.'), { status: 400 });
+  }
+
+  const selectedDate = date || new Date().toISOString().split('T')[0];
+  const budgetMonth = selectedDate.substring(0, 7);
+
+  const expenseData = {
+    amount: parsedAmount,
+    description: description.trim(),
+    category: category || 'Other',
+    date: selectedDate,
+    budgetMonth,
+    note: note ? note.trim() : null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  const docRef = await addDoc(collection(db, 'users', user.uid, 'expenses'), expenseData);
+  return { id: docRef.id, ...expenseData };
+}
+
+async function handleExpensesPut(id, body) {
+  const user = getAuthenticatedUser();
+  const { amount, description, category, date, note } = body;
+  const parsedAmount = parseFloat(amount);
+
+  if (isNaN(parsedAmount) || parsedAmount <= 0) {
+    throw Object.assign(new Error('Amount must be a number greater than 0.'), { status: 400 });
+  }
+
+  const selectedDate = date || new Date().toISOString().split('T')[0];
+  const budgetMonth = selectedDate.substring(0, 7);
+
+  const updateData = {
+    amount: parsedAmount,
+    description: (description || '').trim(),
+    category: category || 'Other',
+    date: selectedDate,
+    budgetMonth,
+    note: note ? note.trim() : null,
+    updatedAt: new Date().toISOString()
+  };
+
+  const docRef = doc(db, 'users', user.uid, 'expenses', id);
+  await updateDoc(docRef, updateData);
+  return { id, ...updateData };
+}
+
+async function handleExpensesDelete(id) {
+  const user = getAuthenticatedUser();
+  const docRef = doc(db, 'users', user.uid, 'expenses', id);
+  await deleteDoc(docRef);
+  return { message: 'Expense deleted successfully.', id };
+}
+
+// 2. Budgets Handlers
+async function handleBudgetsGet(params, path) {
+  const user = getAuthenticatedUser();
+  const budgetsRef = collection(db, 'users', user.uid, 'budgets');
+  
+  // Specific month from URL parameter like /budgets/2026/8 or query ?month=2026-08
+  const pathMatch = path.match(/^\/budgets\/(\d+)\/(\d+)$/);
+  if (pathMatch) {
+    const year = parseInt(pathMatch[1]);
+    const monthNum = parseInt(pathMatch[2]);
+    const monthKey = `${year}-${String(monthNum).padStart(2, '0')}`;
+    const docSnap = await getDoc(doc(db, 'users', user.uid, 'budgets', monthKey));
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data(), exists: true };
+    }
+    return { amount: 0, exists: false, month: monthKey, monthNum, year };
+  }
+
+  const snapshot = await getDocs(budgetsRef);
+  const budgets = snapshot.docs.map(d => ({
+    id: d.id,
+    ...d.data()
+  }));
+
+  if (params.month) {
+    const b = budgets.find(item => item.month === params.month || item.id === params.month);
+    return b ? { month: b.month || params.month, amount: b.amount, exists: true } : { amount: 0, exists: false, month: params.month };
+  }
+
+  return budgets;
+}
+
+async function handleBudgetsPost(body) {
+  const user = getAuthenticatedUser();
+  const { month, year, amount } = body;
+  const parsedAmount = parseFloat(amount) || 0;
+  
+  let monthStr = '';
+  let monthNum = 1;
+  let yearNum = new Date().getFullYear();
+
+  if (typeof month === 'string' && month.includes('-')) {
+    monthStr = month;
+    const [y, m] = month.split('-');
+    yearNum = parseInt(y);
+    monthNum = parseInt(m);
+  } else {
+    monthNum = parseInt(month) || (new Date().getMonth() + 1);
+    yearNum = parseInt(year) || new Date().getFullYear();
+    monthStr = `${yearNum}-${String(monthNum).padStart(2, '0')}`;
+  }
+
+  const budgetData = {
+    month: monthStr,
+    monthNum,
+    year: yearNum,
+    amount: parsedAmount,
+    updatedAt: new Date().toISOString()
+  };
+
+  const docRef = doc(db, 'users', user.uid, 'budgets', monthStr);
+  await setDoc(docRef, budgetData, { merge: true });
+
+  return {
+    message: 'Budget set successfully.',
+    budget: { id: monthStr, ...budgetData, exists: true }
+  };
+}
+
+// 3. Insights Handlers
+async function handleInsightsSummary(params) {
+  const user = getAuthenticatedUser();
+  const month = params.month || new Date().toISOString().substring(0, 7);
+  const [yearStr, monthStr] = month.split('-');
+  const year = parseInt(yearStr) || new Date().getFullYear();
+  const monthNum = parseInt(monthStr) || (new Date().getMonth() + 1);
+
+  // 1. Fetch budget doc
+  const budgetDocSnap = await getDoc(doc(db, 'users', user.uid, 'budgets', month));
+  const budget = budgetDocSnap.exists() ? (budgetDocSnap.data().amount || 0) : 0;
+
+  // 2. Fetch expenses for current month
+  const expensesRef = collection(db, 'users', user.uid, 'expenses');
+  const snapshot = await getDocs(expensesRef);
+  const allUserExpenses = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  
+  const expenses = allUserExpenses.filter(e => e.budgetMonth === month || (e.date && e.date.startsWith(month)));
+  const totalSpent = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const remaining = budget - totalSpent;
+  const percentageUsed = budget > 0 ? (totalSpent / budget) * 100 : 0;
+
+  // 3. Daily spending limits calculation
+  const today = new Date();
+  const systemYear = today.getFullYear();
+  const systemMonth = today.getMonth() + 1;
+  const systemDate = today.getDate();
+  const todayStr = today.toISOString().split('T')[0];
+
+  let remainingDays = 0;
+  let elapsedDays = 0;
+  const totalDaysInMonth = getDaysInMonth(year, monthNum);
+
+  if (year === systemYear && monthNum === systemMonth) {
+    remainingDays = totalDaysInMonth - systemDate + 1;
+    elapsedDays = systemDate;
+  } else if (year > systemYear || (year === systemYear && monthNum > systemMonth)) {
+    remainingDays = totalDaysInMonth;
+    elapsedDays = 0;
+  } else {
+    remainingDays = 0;
+    elapsedDays = totalDaysInMonth;
+  }
+
+  const recommendedDailyLimit = remainingDays > 0 && remaining > 0 ? remaining / remainingDays : 0;
+
+  // 4. Calculate today's spending
+  const todayExpenses = expenses.filter(e => e.date === todayStr);
+  const todaySpent = todayExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const isTodayExceeded = recommendedDailyLimit > 0 && todaySpent > recommendedDailyLimit;
+
+  // 5. Category breakdown
+  const catTotals = {};
+  DEFAULT_CATEGORIES.forEach(cat => {
+    catTotals[cat] = 0;
+  });
+
+  expenses.forEach(e => {
+    const cat = e.category || 'Other';
+    catTotals[cat] = (catTotals[cat] || 0) + (Number(e.amount) || 0);
+  });
+
+  let highestCatName = null;
+  let highestCatAmount = 0;
+  Object.keys(catTotals).forEach(cat => {
+    if (catTotals[cat] > highestCatAmount) {
+      highestCatAmount = catTotals[cat];
+      highestCatName = cat;
+    }
+  });
+
+  const highestCategory = highestCatName && highestCatAmount > 0
+    ? {
+        category: highestCatName,
+        amount: highestCatAmount,
+        percentage: totalSpent > 0 ? parseFloat(((highestCatAmount / totalSpent) * 100).toFixed(1)) : 0
+      }
+    : null;
+
+  let largestExpense = null;
+  if (expenses.length > 0) {
+    const sortedByAmt = [...expenses].sort((a, b) => b.amount - a.amount);
+    largestExpense = sortedByAmt[0];
+  }
+
+  const categoryBreakdown = Object.keys(catTotals).map(cat => {
+    const amt = catTotals[cat] || 0;
+    return {
+      category: cat,
+      amount: amt,
+      percentage: totalSpent > 0 ? parseFloat(((amt / totalSpent) * 100).toFixed(1)) : 0
+    };
+  }).sort((a, b) => b.amount - a.amount);
+
+  const recentTransactions = [...expenses]
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+    .slice(0, 5);
+
+  // 6. Smart insights
+  const insights = [];
+  if (budget > 0) {
+    if (percentageUsed >= 100) {
+      insights.push(`🚨 You have exceeded your monthly budget by ${formatINR(totalSpent - budget)}! Freeze all non-essential spending.`);
+    } else if (percentageUsed >= 85) {
+      insights.push(`⚠️ Critical warning: You have used ${percentageUsed.toFixed(1)}% of your monthly budget. Only ${formatINR(remaining)} remains.`);
+    } else if (percentageUsed >= 70) {
+      insights.push(`🟡 You've reached ${percentageUsed.toFixed(1)}% of your budget. Spend with caution for the rest of the month.`);
+    } else {
+      insights.push(`✅ Great job! You are within your budget with ${formatINR(remaining)} available.`);
+    }
+  } else {
+    insights.push(`📝 Set your monthly budget to start tracking your finances effectively.`);
+  }
+
+  if (highestCategory) {
+    insights.push(`🏆 ${highestCategory.category} is your highest spending category this month (${highestCategory.percentage}% of total).`);
+  }
+  if (recommendedDailyLimit > 0 && remainingDays > 0) {
+    insights.push(`💡 Recommended daily spending limit: ${formatINR(recommendedDailyLimit)}/day for the remaining ${remainingDays} days.`);
+  }
+  if (elapsedDays > 0 && totalSpent > 0) {
+    const avgDaily = totalSpent / elapsedDays;
+    insights.push(`📊 Your average daily spending this month is ${formatINR(avgDaily)}.`);
+  }
+  if (expenses.length === 0) {
+    insights.push(`📝 No expenses recorded for ${month} yet. Click '+ Add Expense' to begin tracking.`);
+  }
+
+  // 7. Previous month comparison
+  let prevMonthNum = monthNum - 1;
+  let prevYear = year;
+  if (prevMonthNum === 0) {
+    prevMonthNum = 12;
+    prevYear = year - 1;
+  }
+  const prevMonthStr = `${prevYear}-${String(prevMonthNum).padStart(2, '0')}`;
+  const prevExpenses = allUserExpenses.filter(e => e.budgetMonth === prevMonthStr || (e.date && e.date.startsWith(prevMonthStr)));
+  const prevTotalSpent = prevExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const diff = totalSpent - prevTotalSpent;
+  const percentageChange = prevTotalSpent > 0 ? parseFloat(((diff / prevTotalSpent) * 100).toFixed(1)) : 0;
+
+  let comparisonText = '';
+  let categoryComparisonText = '';
+
+  if (expenses.length > 0 || prevExpenses.length > 0) {
+    if (diff > 0) {
+      comparisonText = `You spent ${formatINR(diff)} more this month than last month (${prevMonthStr}).`;
+    } else if (diff < 0) {
+      comparisonText = `You reduced your spending by ${formatINR(Math.abs(diff))} compared with last month (${prevMonthStr}).`;
+    } else {
+      comparisonText = `You spent exactly the same amount as last month.`;
+    }
+
+    if (highestCategory) {
+      const prevCatTotal = prevExpenses
+        .filter(e => e.category === highestCategory.category)
+        .reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
+      const catDiff = highestCategory.amount - prevCatTotal;
+      if (catDiff > 0) {
+        categoryComparisonText = `${highestCategory.category} spending increased by ${formatINR(catDiff)} compared with last month.`;
+      } else if (catDiff < 0) {
+        categoryComparisonText = `${highestCategory.category} spending decreased by ${formatINR(Math.abs(catDiff))} compared with last month.`;
+      }
+    }
+  }
+
+  const comparison = {
+    prevMonth: prevMonthStr,
+    previousMonth: prevMonthStr,
+    prevTotalSpent,
+    previousMonthSpent: prevTotalSpent,
+    difference: diff,
+    percentageChange,
+    isHigher: diff > 0,
+    comparisonText,
+    categoryComparisonText
+  };
+
+  return {
+    budget,
+    totalSpent,
+    remaining,
+    percentageUsed,
+    remainingDays,
+    recommendedDailyLimit,
+    todaySpent,
+    isTodayExceeded,
+    highestCategory,
+    largestExpense,
+    categoryBreakdown,
+    recentTransactions,
+    expenses,
+    insights,
+    comparison
+  };
+}
+
+async function handleInsightsHistory() {
+  const user = getAuthenticatedUser();
+  const today = new Date();
+  const months = [];
+
+  // Fetch all budgets and all expenses once for speed
+  const budgetsRef = collection(db, 'users', user.uid, 'budgets');
+  const expensesRef = collection(db, 'users', user.uid, 'expenses');
+
+  const [budgetsSnap, expensesSnap] = await Promise.all([
+    getDocs(budgetsRef),
+    getDocs(expensesRef)
+  ]);
+
+  const allBudgets = budgetsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const allExpenses = expensesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const m = d.getMonth() + 1;
+    const y = d.getFullYear();
+    const mStr = `${y}-${String(m).padStart(2, '0')}`;
+    const mName = d.toLocaleString('default', { month: 'short' });
+
+    const bObj = allBudgets.find(b => b.month === mStr || b.id === mStr || (b.year === y && b.monthNum === m));
+    const bAmt = bObj ? (Number(bObj.amount) || 0) : 0;
+
+    const mExpenses = allExpenses.filter(e => e.budgetMonth === mStr || (e.date && e.date.startsWith(mStr)));
+    const spent = mExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+    months.push({
+      monthKey: mStr,
+      month: mStr,
+      monthName: mName,
+      year: y,
+      budget: bAmt,
+      spent,
+      remaining: bAmt - spent,
+      percentageUsed: bAmt > 0 ? (spent / bAmt) * 100 : 0
+    });
+  }
+
+  return months;
+}
+
+async function handleInsightsCategory(params, path) {
+  const user = getAuthenticatedUser();
+  let targetCategory = params.category;
+  
+  if (!targetCategory) {
+    const prefix = '/insights/category/';
+    if (path.startsWith(prefix)) {
+      targetCategory = decodeURIComponent(path.substring(prefix.length));
+    }
+  }
+
+  const month = params.month || new Date().toISOString().substring(0, 7);
+  const expensesRef = collection(db, 'users', user.uid, 'expenses');
+  const snapshot = await getDocs(expensesRef);
+  const allUserExpenses = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const expenses = allUserExpenses.filter(
+    e => (e.budgetMonth === month || (e.date && e.date.startsWith(month))) &&
+         e.category &&
+         e.category.toLowerCase() === (targetCategory || '').toLowerCase()
+  );
+
+  const total = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+  const subGroups = {};
+  expenses.forEach(e => {
+    const name = (e.description || 'Other').trim();
+    subGroups[name] = (subGroups[name] || 0) + (Number(e.amount) || 0);
+  });
+
+  const detailedBreakdown = Object.keys(subGroups).map(name => ({
+    name,
+    amount: subGroups[name],
+    percentage: total > 0 ? parseFloat(((subGroups[name] / total) * 100).toFixed(1)) : 0
+  })).sort((a, b) => b.amount - a.amount);
+
+  return {
+    category: targetCategory,
+    month,
+    total,
+    percentage: 100,
+    detailedBreakdown,
+    expenses
+  };
+}
+
+// 4. Auth Me Handler
+async function handleAuthMe() {
+  const user = getAuthenticatedUser();
+  const userDocSnap = await getDoc(doc(db, 'users', user.uid));
+  const userData = userDocSnap.exists() ? userDocSnap.data() : {};
+
+  return {
+    id: user.uid,
+    uid: user.uid,
+    name: userData.name || user.displayName || user.email.split('@')[0],
+    email: user.email,
+    created_at: userData.createdAt || user.metadata.creationTime || new Date().toISOString()
+  };
+}
+
+// Main API request dispatcher that implements direct Firestore queries
+async function apiRequest(endpoint, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
+  const { path, params } = parseEndpoint(endpoint);
+  
   let body = {};
   if (options.body) {
     try {
       body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-    } catch (e) {
-      body = {};
+    } catch {
+      body = options.body;
     }
   }
 
-  const token = getToken();
-
-  // Helper storage accessors with safe fallback
-  const getUsers = () => {
-    try {
-      return JSON.parse(localStorage.getItem('paisatrack_local_users') || '[]');
-    } catch (e) {
-      return [];
-    }
-  };
-
-  const saveUsers = (u) => {
-    try {
-      localStorage.setItem('paisatrack_local_users', JSON.stringify(u));
-    } catch (e) {}
-  };
-
-  const getBudgets = () => {
-    try {
-      return JSON.parse(localStorage.getItem('paisatrack_local_budgets') || '[]');
-    } catch (e) {
-      return [];
-    }
-  };
-
-  const saveBudgets = (b) => {
-    try {
-      localStorage.setItem('paisatrack_local_budgets', JSON.stringify(b));
-    } catch (e) {}
-  };
-
-  const getExpenses = () => {
-    try {
-      return JSON.parse(localStorage.getItem('paisatrack_local_expenses') || '[]');
-    } catch (e) {
-      return [];
-    }
-  };
-
-  const saveExpenses = (e) => {
-    try {
-      localStorage.setItem('paisatrack_local_expenses', JSON.stringify(e));
-    } catch (e) {}
-  };
-
-  // Safe endpoint path and query parsing
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
-  const [path, queryString = ''] = cleanEndpoint.split('?');
-  const params = Object.fromEntries(new URLSearchParams(queryString).entries());
-
-  // Current user from token
-  const getCurrentUser = () => {
-    if (!token) return null;
-    const users = getUsers();
-    if (users.length === 0) {
-      const defaultUser = {
-        id: 101,
-        name: 'Kaushik',
-        email: 'user@paisatrack.app',
-        password: 'password123',
-        created_at: new Date().toISOString()
-      };
-      users.push(defaultUser);
-      saveUsers(users);
-      return defaultUser;
-    }
-    const found = users.find(u => 'local_token_' + u.id === token || u.id.toString() === token);
-    return found || users[0];
-  };
-
-  // 1. Auth Register
-  if (path === '/auth/register' && method === 'POST') {
-    const { name, email, password } = body;
-    if (!name || !email || !password) {
-      throw Object.assign(new Error('Please provide name, email, and password.'), { status: 400 });
-    }
-    const users = getUsers();
-    const existing = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (existing) {
-      throw Object.assign(new Error('A user with this email address already exists.'), { status: 400 });
-    }
-    const newUser = {
-      id: Date.now(),
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      password,
-      created_at: new Date().toISOString()
-    };
-    users.push(newUser);
-    saveUsers(users);
-
-    const userObj = { id: newUser.id, name: newUser.name, email: newUser.email };
-    const userToken = 'local_token_' + newUser.id;
-    return { user: userObj, token: userToken };
-  }
-
-  // 2. Auth Login
-  if (path === '/auth/login' && method === 'POST') {
-    const { email, password } = body;
-    const users = getUsers();
-    const user = users.find(u => u.email.toLowerCase() === (email || '').toLowerCase());
-    if (!user || user.password !== password) {
-      throw Object.assign(new Error('Invalid email or password.'), { status: 401 });
-    }
-    const userObj = { id: user.id, name: user.name, email: user.email };
-    const userToken = 'local_token_' + user.id;
-    return { user: userObj, token: userToken };
-  }
-
-  // 3. Auth Me
+  // 1. Auth Me
   if (path === '/auth/me' && method === 'GET') {
-    const user = getCurrentUser();
-    if (!user) {
-      throw Object.assign(new Error('Authentication required.'), { status: 401 });
-    }
-    return { id: user.id, name: user.name, email: user.email };
+    return handleAuthMe();
   }
 
-  // Require auth for all remaining routes
-  const currentUser = getCurrentUser();
-  if (!currentUser) {
-    throw Object.assign(new Error('Authentication token is missing or invalid.'), { status: 401 });
-  }
-  const userId = currentUser.id;
-
-  // 4. Budgets
+  // 2. Budgets
   if (path.startsWith('/budgets')) {
     if (method === 'GET') {
-      const monthParam = params.month;
-      const budgets = getBudgets();
-      if (monthParam) {
-        const [yStr, mStr] = monthParam.split('-');
-        const y = parseInt(yStr);
-        const m = parseInt(mStr);
-        const b = budgets.find(item => item.userId === userId && (item.month === monthParam || (item.year === y && item.monthNum === m)));
-        return b ? { month: b.month || monthParam, amount: b.amount } : null;
-      }
-      return budgets.filter(b => b.userId === userId);
+      return handleBudgetsGet(params, path);
     }
-
     if (method === 'POST') {
-      const { month, year, amount } = body;
-      const parsedAmount = parseFloat(amount) || 0;
-      let monthStr = '';
-      let monthNum = 1;
-      let yearNum = 2026;
-
-      if (typeof month === 'string' && month.includes('-')) {
-        monthStr = month;
-        const [y, m] = month.split('-');
-        yearNum = parseInt(y);
-        monthNum = parseInt(m);
-      } else {
-        monthNum = parseInt(month);
-        yearNum = parseInt(year) || new Date().getFullYear();
-        monthStr = `${yearNum}-${String(monthNum).padStart(2, '0')}`;
-      }
-
-      const budgets = getBudgets();
-      const idx = budgets.findIndex(item => 
-        item.userId === userId && 
-        (item.month === monthStr || (item.year === yearNum && item.monthNum === monthNum))
-      );
-
-      const budgetEntry = {
-        userId,
-        month: monthStr,
-        monthNum,
-        year: yearNum,
-        amount: parsedAmount
-      };
-
-      if (idx >= 0) {
-        budgets[idx] = budgetEntry;
-      } else {
-        budgets.push(budgetEntry);
-      }
-      saveBudgets(budgets);
-      return { message: 'Budget set successfully.', budget: { ...budgetEntry, exists: true } };
+      return handleBudgetsPost(body);
     }
   }
 
-  // 5. Expenses
+  // 3. Expenses
   if (path.startsWith('/expenses')) {
-    const expenses = getExpenses();
-    const idMatch = path.match(/^\/expenses\/(\d+)$/);
-
+    const idMatch = path.match(/^\/expenses\/([^/?]+)$/);
     if (idMatch) {
-      const expenseId = parseInt(idMatch[1]);
-      const idx = expenses.findIndex(e => e.id === expenseId && e.userId === userId);
-
+      const expenseId = idMatch[1];
       if (method === 'PUT') {
-        if (idx === -1) throw Object.assign(new Error('Expense not found.'), { status: 404 });
-        const { amount, description, category, date, note } = body;
-        const budgetMonth = date ? date.substring(0, 7) : new Date().toISOString().substring(0, 7);
-        expenses[idx] = {
-          ...expenses[idx],
-          amount: parseFloat(amount),
-          description: (description || '').trim(),
-          category: category || 'Other',
-          date,
-          budgetMonth,
-          note: note ? note.trim() : null
-        };
-        saveExpenses(expenses);
-        return expenses[idx];
+        return handleExpensesPut(expenseId, body);
       }
-
       if (method === 'DELETE') {
-        if (idx === -1) throw Object.assign(new Error('Expense not found.'), { status: 404 });
-        expenses.splice(idx, 1);
-        saveExpenses(expenses);
-        return { message: 'Expense deleted successfully.' };
+        return handleExpensesDelete(expenseId);
       }
     }
-
     if (method === 'GET') {
-      const month = params.month;
-      const search = (params.search || '').toLowerCase();
-      const category = params.category || '';
-      const sort = params.sort || 'date-desc';
-
-      let userExpenses = expenses.filter(e => e.userId === userId && e.budgetMonth === month);
-
-      if (category && category !== 'all') {
-        userExpenses = userExpenses.filter(e => e.category === category);
-      }
-      if (search) {
-        userExpenses = userExpenses.filter(e =>
-          (e.description && e.description.toLowerCase().includes(search)) ||
-          (e.note && e.note.toLowerCase().includes(search))
-        );
-      }
-
-      userExpenses.sort((a, b) => {
-        if (sort === 'date-asc' || sort === 'date-ASC') return new Date(a.date) - new Date(b.date);
-        if (sort === 'amount-desc' || sort === 'amount-DESC') return b.amount - a.amount;
-        if (sort === 'amount-asc' || sort === 'amount-ASC') return a.amount - b.amount;
-        return new Date(b.date) - new Date(a.date);
-      });
-
-      return userExpenses;
+      return handleExpensesGet(params);
     }
-
     if (method === 'POST') {
-      const { amount, description, category, date, note } = body;
-      const budgetMonth = date ? date.substring(0, 7) : new Date().toISOString().substring(0, 7);
-      const newExpense = {
-        id: Date.now(),
-        userId,
-        amount: parseFloat(amount),
-        description: (description || '').trim(),
-        category: category || 'Other',
-        date: date || new Date().toISOString().split('T')[0],
-        budgetMonth,
-        note: note ? note.trim() : null,
-        created_at: new Date().toISOString()
-      };
-      expenses.push(newExpense);
-      saveExpenses(expenses);
-      return newExpense;
+      return handleExpensesPost(body);
     }
   }
 
-  // 6. Insights Summary
+  // 4. Insights Summary
   if (path === '/insights/summary' && method === 'GET') {
-    const month = params.month || new Date().toISOString().substring(0, 7);
-    const [yearStr, monthStr] = month.split('-');
-    const year = parseInt(yearStr) || new Date().getFullYear();
-    const monthNum = parseInt(monthStr) || (new Date().getMonth() + 1);
-
-    const budgets = getBudgets();
-    const budgetObj = budgets.find(b => 
-      b.userId === userId && 
-      (b.month === month || (b.year === year && b.monthNum === monthNum))
-    );
-    const budget = budgetObj ? budgetObj.amount : 0;
-
-    const expenses = getExpenses().filter(e => e.userId === userId && e.budgetMonth === month);
-    const totalSpent = expenses.reduce((sum, e) => sum + e.amount, 0);
-    const remaining = budget - totalSpent;
-    const percentageUsed = budget > 0 ? (totalSpent / budget) * 100 : 0;
-
-    const today = new Date();
-    const systemYear = today.getFullYear();
-    const systemMonth = today.getMonth() + 1;
-    const systemDate = today.getDate();
-
-    let remainingDays = 0;
-    const totalDaysInMonth = getDaysInMonth(year, monthNum);
-
-    if (year === systemYear && monthNum === systemMonth) {
-      remainingDays = totalDaysInMonth - systemDate + 1;
-    } else if (year > systemYear || (year === systemYear && monthNum > systemMonth)) {
-      remainingDays = totalDaysInMonth;
-    } else {
-      remainingDays = 0;
-    }
-
-    const recommendedDailyLimit = remainingDays > 0 && remaining > 0 ? remaining / remainingDays : 0;
-
-    const catTotals = {};
-    DEFAULT_CATEGORIES.forEach(cat => {
-      catTotals[cat] = 0;
-    });
-
-    expenses.forEach(e => {
-      const cat = e.category || 'Other';
-      catTotals[cat] = (catTotals[cat] || 0) + e.amount;
-    });
-
-    let highestCatName = null;
-    let highestCatAmount = 0;
-    Object.keys(catTotals).forEach(cat => {
-      if (catTotals[cat] > highestCatAmount) {
-        highestCatAmount = catTotals[cat];
-        highestCatName = cat;
-      }
-    });
-
-    const highestCategory = highestCatName && highestCatAmount > 0
-      ? {
-          category: highestCatName,
-          amount: highestCatAmount,
-          percentage: totalSpent > 0 ? parseFloat(((highestCatAmount / totalSpent) * 100).toFixed(1)) : 0
-        }
-      : null;
-
-    let largestExpense = null;
-    if (expenses.length > 0) {
-      const sortedByAmt = [...expenses].sort((a, b) => b.amount - a.amount);
-      largestExpense = sortedByAmt[0];
-    }
-
-    const categoryBreakdown = Object.keys(catTotals).map(cat => {
-      const amt = catTotals[cat] || 0;
-      return {
-        category: cat,
-        amount: amt,
-        percentage: totalSpent > 0 ? parseFloat(((amt / totalSpent) * 100).toFixed(1)) : 0
-      };
-    }).sort((a, b) => b.amount - a.amount);
-
-    const recentTransactions = [...expenses]
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .slice(0, 5);
-
-    const insights = [];
-    if (budget > 0) {
-      if (percentageUsed >= 100) {
-        insights.push(`🚨 You have exceeded your monthly budget by ${formatINR(totalSpent - budget)}! Freeze all non-essential spending.`);
-      } else if (percentageUsed >= 85) {
-        insights.push(`⚠️ Critical warning: You have used ${percentageUsed.toFixed(1)}% of your monthly budget. Only ${formatINR(remaining)} remains.`);
-      } else if (percentageUsed >= 70) {
-        insights.push(`🟡 You've reached ${percentageUsed.toFixed(1)}% of your budget. Spend with caution for the rest of the month.`);
-      } else {
-        insights.push(`✅ Great job! You are within your budget with ${formatINR(remaining)} available.`);
-      }
-    }
-    if (highestCategory) {
-      insights.push(`🏆 ${highestCategory.category} is your highest spending category this month (${highestCategory.percentage}% of total).`);
-    }
-    if (recommendedDailyLimit > 0 && remainingDays > 0) {
-      insights.push(`💡 Recommended daily spending limit: ${formatINR(recommendedDailyLimit)}/day for the remaining ${remainingDays} days.`);
-    }
-    if (expenses.length === 0) {
-      insights.push(`📝 No expenses recorded for ${month} yet. Click '+ Add Expense' to begin tracking.`);
-    }
-
-    // Previous month comparison for Monthly History tab
-    const prevDate = new Date(year, monthNum - 2, 1);
-    const prevMonthStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-    const prevExpenses = getExpenses().filter(e => e.userId === userId && e.budgetMonth === prevMonthStr);
-    const prevSpent = prevExpenses.reduce((sum, e) => sum + e.amount, 0);
-    const diff = totalSpent - prevSpent;
-    const percentageChange = prevSpent > 0 ? parseFloat(((diff / prevSpent) * 100).toFixed(1)) : 0;
-
-    const comparison = {
-      previousMonth: prevMonthStr,
-      previousMonthSpent: prevSpent,
-      difference: diff,
-      percentageChange,
-      isHigher: diff > 0
-    };
-
-    return {
-      budget,
-      totalSpent,
-      remaining,
-      percentageUsed,
-      remainingDays,
-      recommendedDailyLimit,
-      todaySpent: 0,
-      isTodayExceeded: false,
-      highestCategory,
-      largestExpense,
-      categoryBreakdown,
-      recentTransactions,
-      insights,
-      comparison
-    };
+    return handleInsightsSummary(params);
   }
 
-  // 7. Insights History
+  // 5. Insights History
   if (path === '/insights/history' && method === 'GET') {
-    const months = [];
-    const now = new Date();
-    const budgets = getBudgets();
-    const expenses = getExpenses();
-
-    for (let i = 0; i < 6; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const y = d.getFullYear();
-      const m = d.getMonth() + 1;
-      const mName = d.toLocaleString('default', { month: 'short', year: 'numeric' });
-
-      const bObj = budgets.find(b => 
-        b.userId === userId && 
-        (b.month === mStr || (b.year === y && b.monthNum === m))
-      );
-      const bAmt = bObj ? bObj.amount : 0;
-
-      const mExpenses = expenses.filter(e => e.userId === userId && e.budgetMonth === mStr);
-      const spent = mExpenses.reduce((sum, e) => sum + e.amount, 0);
-
-      months.push({
-        month: mStr,
-        monthName: mName,
-        budget: bAmt,
-        spent,
-        remaining: bAmt - spent,
-        percentageUsed: bAmt > 0 ? (spent / bAmt) * 100 : 0
-      });
-    }
-
-    return months.reverse();
+    return handleInsightsHistory();
   }
 
-  // 8. Insights Category (supports /insights/category/:category and /insights/category?category=...)
+  // 6. Insights Category
   if (path.startsWith('/insights/category') && method === 'GET') {
-    let targetCategory = params.category;
-    if (!targetCategory) {
-      const prefix = '/insights/category/';
-      if (path.startsWith(prefix)) {
-        targetCategory = decodeURIComponent(path.substring(prefix.length));
-      }
-    }
-
-    const month = params.month || new Date().toISOString().substring(0, 7);
-    const expenses = getExpenses().filter(
-      e => e.userId === userId && 
-           e.budgetMonth === month && 
-           e.category && 
-           (e.category.toLowerCase() === (targetCategory || '').toLowerCase() ||
-            encodeURIComponent(e.category.toLowerCase()) === (targetCategory || '').toLowerCase())
-    );
-    const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-
-    const subGroups = {};
-    expenses.forEach(e => {
-      const name = (e.description || 'Other').trim();
-      subGroups[name] = (subGroups[name] || 0) + e.amount;
-    });
-
-    const detailedBreakdown = Object.keys(subGroups).map(name => ({
-      name,
-      amount: subGroups[name],
-      percentage: total > 0 ? parseFloat(((subGroups[name] / total) * 100).toFixed(1)) : 0
-    })).sort((a, b) => b.amount - a.amount);
-
-    return {
-      category: targetCategory,
-      total,
-      percentage: 100,
-      detailedBreakdown,
-      expenses
-    };
+    return handleInsightsCategory(params, path);
   }
 
   throw Object.assign(new Error(`Endpoint ${path} not found.`), { status: 404 });
 }
 
-async function apiRequest(endpoint, options = {}) {
-  // If file: protocol is used locally without any web server, fallback to client storage
-  if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
-    return handleClientStorage(endpoint, options);
-  }
-
-  // Attempt to reach configured backend API
-  const token = getToken();
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const targetUrl = `${API_BASE}${cleanEndpoint}`;
-
-  try {
-    const response = await fetch(targetUrl, {
-      ...options,
-      headers,
-    });
-
-    const text = await response.text();
-    let data = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch (parseErr) {
-      console.warn(`Non-JSON response received from ${targetUrl}:`, text.slice(0, 120));
-      if (!response.ok) {
-        if (response.status === 502 || response.status === 503 || response.status === 504) {
-          throw Object.assign(
-            new Error('Backend server is spinning up or unavailable on Render. Please wait ~30 seconds and try again.'),
-            { status: response.status }
-          );
-        }
-        if (response.status === 404) {
-          throw Object.assign(
-            new Error(`Endpoint not found (404) at ${targetUrl}. Please verify your backend deployment URL.`),
-            { status: 404 }
-          );
-        }
-        throw Object.assign(
-          new Error(`Server returned error (${response.status}). Please check your backend service.`),
-          { status: response.status }
-        );
-      }
-      return handleClientStorage(endpoint, options);
-    }
-
-    if (!response.ok) {
-      const errorMessage = data.error || data.message || `Request failed with status ${response.status}`;
-      const error = new Error(errorMessage);
-      error.status = response.status;
-      throw error;
-    }
-
-    return data;
-  } catch (err) {
-    if (err.status) {
-      throw err;
-    }
-    // Network failure (CORS error, DNS error, server unreachable)
-    console.warn(`Network error requesting ${targetUrl}:`, err.message);
-    if (RAW_API_URL) {
-      throw new Error(`Unable to connect to backend at ${RAW_API_URL}. The server may be asleep or waking up. Please wait 30 seconds and try again.`);
-    }
-    return handleClientStorage(endpoint, options);
-  }
-}
+export const setToken = () => {
+  // Maintained for backward compatibility; Firebase SDK persists session automatically
+};
 
 export const api = {
   get: (endpoint, options) => apiRequest(endpoint, { method: 'GET', ...options }),
-  post: (endpoint, body, options) => apiRequest(endpoint, { method: 'POST', body: JSON.stringify(body), ...options }),
-  put: (endpoint, body, options) => apiRequest(endpoint, { method: 'PUT', body: JSON.stringify(body), ...options }),
+  post: (endpoint, body, options) => apiRequest(endpoint, { method: 'POST', body, ...options }),
+  put: (endpoint, body, options) => apiRequest(endpoint, { method: 'PUT', body, ...options }),
   delete: (endpoint, options) => apiRequest(endpoint, { method: 'DELETE', ...options }),
 };
