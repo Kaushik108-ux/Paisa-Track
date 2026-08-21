@@ -275,9 +275,9 @@ async function handleInsightsSummary(params) {
   const systemDate = today.getDate();
   const todayStr = today.toISOString().split('T')[0];
 
+  const totalDaysInMonth = getDaysInMonth(year, monthNum);
   let remainingDays = 0;
   let elapsedDays = 0;
-  const totalDaysInMonth = getDaysInMonth(year, monthNum);
 
   if (year === systemYear && monthNum === systemMonth) {
     remainingDays = totalDaysInMonth - systemDate + 1;
@@ -290,7 +290,8 @@ async function handleInsightsSummary(params) {
     elapsedDays = totalDaysInMonth;
   }
 
-  const recommendedDailyLimit = remainingDays > 0 && remaining > 0 ? remaining / remainingDays : 0;
+  // Calculate daily budget evenly across all days in the respective month
+  const recommendedDailyLimit = totalDaysInMonth > 0 && budget > 0 ? (budget / totalDaysInMonth) : 0;
 
   // 4. Calculate today's spending
   const todayExpenses = expenses.filter(e => e.date === todayStr);
@@ -363,8 +364,8 @@ async function handleInsightsSummary(params) {
   if (highestCategory) {
     insights.push(`🏆 ${highestCategory.category} is your highest spending category this month (${highestCategory.percentage}% of total).`);
   }
-  if (recommendedDailyLimit > 0 && remainingDays > 0) {
-    insights.push(`💡 Recommended daily spending limit: ${formatINR(recommendedDailyLimit)}/day for the remaining ${remainingDays} days.`);
+  if (recommendedDailyLimit > 0) {
+    insights.push(`💡 Recommended daily spending limit: ${formatINR(recommendedDailyLimit)}/day (${totalDaysInMonth} days in ${month}).`);
   }
   if (elapsedDays > 0 && totalSpent > 0) {
     const avgDaily = totalSpent / elapsedDays;
@@ -429,6 +430,7 @@ async function handleInsightsSummary(params) {
     totalSpent,
     remaining,
     percentageUsed,
+    totalDaysInMonth,
     remainingDays,
     recommendedDailyLimit,
     todaySpent,

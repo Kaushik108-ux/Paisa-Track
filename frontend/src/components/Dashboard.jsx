@@ -128,6 +128,7 @@ export default function Dashboard({
     totalSpent = 0,
     remaining = 0,
     percentageUsed = 0,
+    totalDaysInMonth = 31,
     recommendedDailyLimit = 0,
     isTodayExceeded = false,
     categoryBreakdown = [],
@@ -504,7 +505,10 @@ export default function Dashboard({
               
               {/* Recommended Daily Spending Limit card */}
               <div className="bg-white p-5 rounded-2xl shadow-card border border-slate-100">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Recommended Daily Spending</span>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Recommended Daily Spending</span>
+                  <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">{totalDaysInMonth} days</span>
+                </div>
                 <div className="mt-3 flex items-baseline gap-1">
                   <h3 className="text-2xl font-black text-brand-primary">
                     {recommendedDailyLimit > 0 ? `${formatINR(recommendedDailyLimit)}` : '₹0'}
