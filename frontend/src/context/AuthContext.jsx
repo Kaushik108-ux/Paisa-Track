@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AuthContext } from './authContextDef';
-import { auth, db } from '../services/firebase';
+import { auth, db, isFirebaseConfigured } from '../services/firebase';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -47,48 +47,68 @@ export const AuthProvider = ({ children }) => {
 
   // Synchronize Firebase persistent authentication state
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDocSnap = await getDoc(userDocRef);
-          
-          let profileData = {};
-          if (userDocSnap.exists()) {
-            profileData = userDocSnap.data();
-          } else {
-            // First time profile creation if not already stored
-            profileData = {
-              name: firebaseUser.displayName || firebaseUser.email.split('@')[0] || 'User',
-              email: firebaseUser.email,
-              createdAt: firebaseUser.metadata?.creationTime || new Date().toISOString()
-            };
-            await setDoc(userDocRef, profileData, { merge: true });
-          }
-
-          setUser({
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            name: profileData.name || firebaseUser.displayName || 'User',
-            email: firebaseUser.email,
-            created_at: profileData.createdAt || firebaseUser.metadata?.creationTime || new Date().toISOString()
-          });
-        } catch (err) {
-          console.error('Error fetching user profile from Firestore:', err);
-          // Fallback to basic Firebase user info
-          setUser({
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            name: firebaseUser.displayName || firebaseUser.email.split('@')[0] || 'User',
-            email: firebaseUser.email,
-            created_at: firebaseUser.metadata?.creationTime || new Date().toISOString()
-          });
-        }
-      } else {
-        setUser(null);
-      }
+    if (!isFirebaseConfigured || !auth) {
       setLoading(false);
-    });
+      return;
+    }
+
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = onAuthStateChanged(
+        auth,
+        async (firebaseUser) => {
+          if (firebaseUser) {
+            try {
+              let profileData = {};
+              if (db) {
+                const userDocRef = doc(db, 'users', firebaseUser.uid);
+                const userDocSnap = await getDoc(userDocRef);
+                
+                if (userDocSnap.exists()) {
+                  profileData = userDocSnap.data();
+                } else {
+                  // First time profile creation if not already stored
+                  profileData = {
+                    name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                    email: firebaseUser.email,
+                    createdAt: firebaseUser.metadata?.creationTime || new Date().toISOString()
+                  };
+                  await setDoc(userDocRef, profileData, { merge: true });
+                }
+              }
+
+              setUser({
+                id: firebaseUser.uid,
+                uid: firebaseUser.uid,
+                name: profileData.name || firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                email: firebaseUser.email,
+                created_at: profileData.createdAt || firebaseUser.metadata?.creationTime || new Date().toISOString()
+              });
+            } catch (err) {
+              console.error('Error fetching user profile from Firestore:', err);
+              // Fallback to basic Firebase user info
+              setUser({
+                id: firebaseUser.uid,
+                uid: firebaseUser.uid,
+                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                email: firebaseUser.email,
+                created_at: firebaseUser.metadata?.creationTime || new Date().toISOString()
+              });
+            }
+          } else {
+            setUser(null);
+          }
+          setLoading(false);
+        },
+        (authErr) => {
+          console.error('Firebase onAuthStateChanged error:', authErr);
+          setLoading(false);
+        }
+      );
+    } catch (err) {
+      console.error('Failed to attach Firebase auth state listener:', err);
+      setLoading(false);
+    }
 
     return () => unsubscribe();
   }, []);
@@ -96,13 +116,25 @@ export const AuthProvider = ({ children }) => {
   // Login handler
   const login = async (email, password) => {
     setError(null);
+    if (!isFirebaseConfigured || !auth) {
+      const msg = 'Firebase is not configured. Please set your Firebase environment variables.';
+      setError(msg);
+      throw new Error(msg);
+    }
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const firebaseUser = userCredential.user;
 
-      const userDocRef = doc(db, 'users', firebaseUser.uid);
-      const userDocSnap = await getDoc(userDocRef);
-      const profileData = userDocSnap.exists() ? userDocSnap.data() : {};
+      let profileData = {};
+      if (db) {
+        try {
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          profileData = userDocSnap.exists() ? userDocSnap.data() : {};
+        } catch (dbErr) {
+          console.warn('Could not read user profile from Firestore:', dbErr);
+        }
+      }
 
       const userObj = {
         id: firebaseUser.uid,
@@ -126,6 +158,11 @@ export const AuthProvider = ({ children }) => {
   // Register handler
   const register = async (name, email, password) => {
     setError(null);
+    if (!isFirebaseConfigured || !auth) {
+      const msg = 'Firebase is not configured. Please set your Firebase environment variables.';
+      setError(msg);
+      throw new Error(msg);
+    }
     try {
       const trimmedName = name.trim();
       const trimmedEmail = email.trim().toLowerCase();
@@ -148,7 +185,13 @@ export const AuthProvider = ({ children }) => {
         createdAt
       };
 
-      await setDoc(doc(db, 'users', firebaseUser.uid), userDocData);
+      if (db) {
+        try {
+          await setDoc(doc(db, 'users', firebaseUser.uid), userDocData);
+        } catch (dbErr) {
+          console.warn('Could not write user profile to Firestore:', dbErr);
+        }
+      }
 
       const userObj = {
         id: firebaseUser.uid,
@@ -172,7 +215,9 @@ export const AuthProvider = ({ children }) => {
   // Logout handler
   const logout = async () => {
     try {
-      await signOut(auth);
+      if (auth) {
+        await signOut(auth);
+      }
       setUser(null);
       setError(null);
     } catch (err) {
@@ -183,6 +228,11 @@ export const AuthProvider = ({ children }) => {
   // Password reset handler
   const forgotPassword = async (email) => {
     setError(null);
+    if (!isFirebaseConfigured || !auth) {
+      const msg = 'Firebase is not configured. Please set your Firebase environment variables.';
+      setError(msg);
+      throw new Error(msg);
+    }
     try {
       await sendPasswordResetEmail(auth, email.trim());
       return { message: 'Password reset link sent to your email. Please check your inbox.' };

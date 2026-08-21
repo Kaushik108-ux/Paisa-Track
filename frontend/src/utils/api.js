@@ -1,4 +1,4 @@
-import { auth, db } from '../services/firebase';
+import { auth, db, isFirebaseConfigured } from '../services/firebase';
 import {
   collection,
   doc,
@@ -38,6 +38,11 @@ function formatINR(val) {
 
 // Helper to get currently authenticated Firebase user or throw
 function getAuthenticatedUser() {
+  if (!isFirebaseConfigured || !auth) {
+    const error = new Error('Firebase credentials are not configured on this deployment.');
+    error.status = 500;
+    throw error;
+  }
   const user = auth.currentUser;
   if (!user) {
     const error = new Error('Authentication required. Please log in.');

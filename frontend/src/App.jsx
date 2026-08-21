@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthProvider, AuthContext } from './context/AuthContext';
+import { isFirebaseConfigured } from './services/firebase';
+import FirebaseSetupNotice from './components/FirebaseSetupNotice';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Transactions from './components/Transactions';
@@ -124,6 +126,10 @@ function MainAppContent() {
       setModalLoading(false);
     }
   };
+
+  if (!isFirebaseConfigured) {
+    return <FirebaseSetupNotice />;
+  }
 
   if (loading) {
     return (
