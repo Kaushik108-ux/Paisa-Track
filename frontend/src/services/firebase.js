@@ -3,21 +3,18 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || '',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || '',
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || '',
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyC0LnyAK7DxKddv5M_BAfWnykOX92KdRVM',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'paisatrack-c5df0.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'paisatrack-c5df0',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'paisatrack-c5df0.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '32669407573',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:32669407573:web:ac37ffaa4c0ebcb3eaf7dc',
 };
 
 export const isFirebaseConfigured = Boolean(
   firebaseConfig.apiKey &&
-  firebaseConfig.apiKey !== 'your-firebase-api-key' &&
   firebaseConfig.projectId &&
-  firebaseConfig.projectId !== 'your-project-id' &&
-  firebaseConfig.appId &&
-  firebaseConfig.appId !== 'your-firebase-app-id'
+  firebaseConfig.appId
 );
 
 let app = null;
@@ -42,4 +39,5 @@ if (isFirebaseConfigured) {
 
 export { app, auth, db };
 export default app;
+
 
